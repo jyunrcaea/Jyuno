@@ -146,6 +146,11 @@ public class JyunoCommand
                 throw new JyunoException("로그에 필요한 진수가 누락되었습니다.");
             return Math.Log2(args[0]);
         });
+        dict.AddFunction("math.abs" , args => {
+            if (args.Length is 0)
+                throw new JyunoException("절댓값을 구할 값이 필요합니다.");
+            return Math.Abs(args[0]);
+        });
     }
     public static void AddFile(VariableDictionary dict)
     {

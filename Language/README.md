@@ -40,3 +40,43 @@ Jyuno에서 함수는 변수로 취급하기 때문에, 삭제가 가능합니다.
 ```
 (함수명) =
 ```
+### 반환값을 인자로 사용하기
+Jyuno에서는 괄호를 통해 다음과 같은 방법으로 함수를 실행해서 나온 값을 다시 다른 함수에 넘겨 쓸수 있습니다.
+```
+console.write (add "hello! " (console.readline))
+```
+괄호 내에서는 똑같이 ``(함수명) (인자1) (인자2)...`` 규칙이 적용됩니다. 별개의 명령줄로 생각하면 편합니다.
+
+## 명령어(command)
+아래 명령어는 모든 Jyuno 인터프리터가 지원하지 않습니다.<br>
+Jyuno를 사용하는 C# 프로그램이 일부 Jyuno 명령어를 비활성화 할수 있기 때문에, 해당 프로그램이 어느 Jyuno 명령어를 지원하는지 확인해야 합니다.
+### 기본
+<b>아래 명령어는 Jyuno에서 기본적으로 포함되며, 반드시 지원합니다.</b>
+- 정수: ``int`` (0을 반환) 또는 ``int (any)`` (다른 타입의 값을 int로 변환합니다.)
+- 실수: ``double`` (0.0 을 반환) 또는 ``double (any)`` (다른 타입의 값을 double로 변환합니다.)
+- 문자열: ``string`` (빈 문자열을 반환) 또는 ``string (any)`` (다른 타입의 값을 string으로 변환합니다.)
+- 덧셈: ``add (any) (any) (any) ...`` (개수에 상관없이 주어진 인자를 모두 더함)
+- 뺄셈: ``sub (int|double) (int|double)`` 또는 ``sub (string) (string)`` (문자열에 원하는 문자열을 제거함)
+- 곱셈: ``mul (int|double) (int|double) ...`` (개수에 상관없이 주어진 인자를 모두 곱함) 또는 ``mul (string) (int)`` (문자열을 원하는 횟수로 반복함)
+- 나눗셈: ``div (int|double) (int|double)``
+- 나머지: ``mod (int|double) (int|double)``
+- null(상수): ``null``
+- true(상수): ``true``
+- false(상수): ``false``
+### 콘솔(Console)
+콘솔과 관련된 명령어입니다.
+- 출력: ``console.write (any)`` 또는 ``console.write (string) (any) (any)``
+   (console.write는 C#의 Console.Write 함수를 그대로 사용합니다. 그에따라 ``console.write "hello {1}" 'jyunni'`` 같은 명령어를 사용할수 있습니다.)
+- 입력: ``console.readline``
+- 초기화: ``console.clear``
+- 제목(변수): ``console.title = (string)``
+### 수학(Math)
+수학과 관련된 명령어입니다.
+- 절댓값: ``math.abs (int|double)``
+- 사인: ``math.sin (double)``
+- 코사인: ``math.cos (double)``
+- 탄젠트: ``math.tan (double)``
+- 제곱: ``math.pow (double) (double)``
+- 로그 (상용로그): ``math.log (double)``
+- 로그 (이진로그): ``math.log2 (double)``
+- 파이 (상수): ``math.pi``
