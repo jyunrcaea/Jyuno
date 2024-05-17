@@ -7,6 +7,8 @@ public class Parser
 {
     public static IEnumerable<Token> Tokenizer(string text)
     {
+        text = text.Trim();
+        LinkedList<Token> stack = new();
         for(int index=0 ; index<text.Length; index++)
         {
             char start = text[index];
@@ -17,7 +19,7 @@ public class Parser
             //연산자?
             if (Grammer.Prefixs.Contains(start))
             {
-                yield return new(TokenType.Prefix , start);
+                stack.AddLast(new Token(TokenType.Prefix , start));
                 continue;
             }
             //숫자?
@@ -40,12 +42,12 @@ public class Parser
                         dec *= 0.1;
                     }
                     index--;
-                    yield return new(TokenType.Constant, d);
+                    stack.AddLast(new Token(TokenType.Constant , d));
                     continue;
                 }
                 //정수라면?
                 index--;
-                yield return new(TokenType.Constant, num);
+                stack.AddLast(new Token(TokenType.Constant , num));
                 continue;
             }
             //문자?
@@ -58,8 +60,8 @@ public class Parser
                     {
                         if (++index >= text.Length)
                         {
-                            yield return new(TokenType.Error , "문자열은 항상 따옴표로 끝나야 합니다.");
-                            yield break;
+                            stack.AddLast(new Token(TokenType.Error , "문자열은 항상 따옴표로 끝나야 합니다."));
+                            return stack;
                         }
                         if (text[index] is 'n') { sb.Append('\n'); continue; }
                         if (text[index] is 'r') {  sb.Append('\r'); continue; }
@@ -68,10 +70,10 @@ public class Parser
                 }
                 if (index >= text.Length)
                 {
-                    yield return new(TokenType.Error , "문자열은 항상 따옴표로 끝나야 합니다.");
-                    yield break;
+                    stack.AddLast(new Token(TokenType.Error , "문자열은 항상 따옴표로 끝나야 합니다."));
+                    return stack;
                 }
-                yield return new(TokenType.Constant, sb.ToString());
+                stack.AddLast(new Token(TokenType.Constant , sb.ToString()));
                 continue;
             }
             //글자!
@@ -88,12 +90,13 @@ public class Parser
             //키워드인가?
             if (Grammer.Keywords.ContainsKey(name))
             {
-                yield return new(TokenType.Keyword, Grammer.Keywords[name]);
+                stack.AddLast(new Token(TokenType.Keyword, Grammer.Keywords[name]));
                 continue;
             }
             //변수인지 뭔지는 그때 판단하는걸로
-            yield return new(TokenType.Name, name);
+            stack.AddLast(new Token(TokenType.Name , name));
         }
+        return stack;
     }
 
     public static IEnumerable<GrammerError> Checker(string[] texts)

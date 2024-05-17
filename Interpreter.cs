@@ -53,34 +53,85 @@ public class Interpreter : IDisposable
     }
 
     public List<CommandLine> scripts = new();
-    public dynamic? ExecuteLine(string cmd)
+    public object? ExecuteLine(string cmd)
     {
         int index = scripts.Count;
         scripts.Add(new(cmd));
         return ExecuteLine(index);
     }
-    public dynamic? ExecuteLine(int line)
+    public object? ExecuteLine(int line)
     {
-        if (scripts[line].tokens is null)
+        Token[] tokens = scripts[line].tokens;
+        if (tokens.Length > 0 && tokens.Last().type is TokenType.Error)
         {
-            if (scripts[line].Parse())
-                return new GrammerError(line ,(string)scripts[line].tokens.Last().value);
+            return new GrammerError(line ,(string)scripts[line].tokens!.Last().value);
         }
         //키워드는 인터프리터 차원에서 관리
-        Token[] tokens = scripts[line].tokens!;
         if (tokens.Length is 0)
             return null;
         else if (tokens[0].type is TokenType.Keyword)
         {
             switch ((Grammer.KeywordType)tokens[0].value)
             {
+                //반환
                 case Grammer.KeywordType.Return:
                     return new ReturnInfo(token2value(tokens , 1, out _));
+                //이동
+                case Grammer.KeywordType.Goto:
+                    var ret = token2value(tokens , 1 , out _);
+                    if (ret.Count is 0)
+                    {
+                        throw new JyunoException("이동할 값을 넣지 않았습니다.");
+                    }
+                    if (ret.First() is int goto_line)
+                    {
+                        if (goto_line < 0)
+                            throw new JyunoException("실행 위치를 음수로 이동할수 없습니다.");
+                        CurrentExecuteLine = goto_line;
+                    }
+                    else
+                        throw new JyunoException("실행 위치는 음이 아닌 정수여야 합니다.");
+                    break;
+                //만약
+                case Grammer.KeywordType.If:
+                    ret = token2value(tokens , 1 , out _);
+                    bool enable = ret.Count > 0;
+                    if (enable)
+                    {
+                        var first = ret.First();
+                        if (
+                            first is null ||
+                            (first is long l && l.Equals(0)) ||
+                            (first is bool b && b == false)
+                        )
+                        {
+                            enable = false;
+                        }
+                    }
+                    //실행하지 않을꺼라면 else 또는 end를 찾을때까지 건너뛰기
+                    if (!enable)
+                    {
+                        if (skip(Grammer.KeywordType.Else, Grammer.KeywordType.End) is GrammerError ge)
+                        {
+                            return ge;
+                        }
+                    }
+                    //실행할꺼면 어짜피 else 마주칠때까지 실행하면 됨
+                    break;
+                case Grammer.KeywordType.Else:
+                    if (skip(Grammer.KeywordType.End) is GrammerError ger)
+                    {
+                        return ger;
+                    }
+                    break;
+                case Grammer.KeywordType.End:
+                    return new GrammerError(CurrentExecuteLine,"중단될수 없습니다.");
             }
+            return null;
         }
        return execute(tokens , 0,out _);
     }
-    public dynamic? Run(int start = 0)
+    public object? Run(int start = 0)
     {
         if (CurrentExecuteLine >= 0)
             throw new JyunoException("이미 실행중입니다.");
@@ -94,7 +145,32 @@ public class Interpreter : IDisposable
         return null;
     }
 
-    dynamic? execute(Token[] tokens , int start,out int end)
+    GrammerError? skip(params object[] end)
+    {
+        Token[] tk;
+        object? first;
+        do
+        {
+            //더이상 없다면... 그거대로 문제네
+            if (++CurrentExecuteLine >= scripts.Count)
+            {
+                return new GrammerError(CurrentExecuteLine , "종료 키워드가 없습니다.");
+            }
+
+            tk = scripts[CurrentExecuteLine].tokens;
+            if (tk.Length > 0 && tk.First().type is TokenType.Error)
+            {
+                return new GrammerError(CurrentExecuteLine , (string)tk.First().value);
+            }
+            first = tk.Length is 0 ? null : tk.First().value;
+        }
+        while (
+            first is null ||
+            !end.Contains(first)
+        );
+        return null;
+    }
+    object? execute(Token[] tokens , int start,out int end)
     {
         end = tokens.Length; //기본값
         if (start >= tokens.Length)
@@ -104,6 +180,18 @@ public class Interpreter : IDisposable
         {
             //상수
             case TokenType.Constant:
+                //근데 뒤에 대입 연산이 있는가?
+                if (checkvalue(tokens,start+1,TokenType.Prefix,'=') && tokens.Length >= start+2)
+                {
+                    //이름도?
+                    Token name = tokens[start+2];
+                    if (name.type == TokenType.Name)
+                    {
+                        //그러면 상수 만들기!
+                        substitute_variable((string)name.value, new JyunoConstantVariable(token.value));
+                        return null;
+                    }
+                }
                 return token.value;
             //이름
             case TokenType.Name:
@@ -114,7 +202,7 @@ public class Interpreter : IDisposable
                     {
                         //삭제 연산
                         if (EnableRemoveVariable)
-                            return remove_variable(token.value);
+                            return remove_variable((string)token.value);
                         else
                             throw new JyunoException("런타임에서 변수/함수 삭제 연산을 허용하지 않습니다.");
                     }
@@ -123,7 +211,7 @@ public class Interpreter : IDisposable
                         throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
                     var ret = execute(tokens , start + 2,out end); //별다른 제한이 없음.
                     //변수가 존재하는가?
-                    if (search_variable(token.value , out dynamic? v))
+                    if (search_variable((string)token.value , out dynamic? v))
                     {
                         if (v is VariableInterface vi)
                             vi.Set(ret);
@@ -132,12 +220,18 @@ public class Interpreter : IDisposable
                     }
                     else
                     {
-                        substitute_variable(token.value , new JyunoVariable(ret));
+                        substitute_variable((string)token.value , new JyunoVariable(ret));
                     }
                     return null;
                 }
+                //레이블 연산인가?
+                if (checkvalue(tokens,start+1,TokenType.Prefix,':'))
+                {
+                    substitute_variable((string)token.value , new JyunoVariable(CurrentExecuteLine));
+                    return null;
+                }
                 //대입 연산이 아니면
-                if (!search_variable(token.value,out dynamic? f))
+                if (!search_variable((string)token.value ,out dynamic? f))
                 {
                     throw new JyunoException($"'{token.value}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
                 }
@@ -167,16 +261,16 @@ public class Interpreter : IDisposable
         }
         return null;
     }
-    bool checkvalue(in Token[] arr,in int index,in TokenType type,in dynamic? value)
+    bool checkvalue(in Token[] arr,in int index,in TokenType type,in object? value)
     {
         if (index >= arr.Length)
             return false;
         Token t = arr[index];
-        return t.type == type && t.value == value;
+        return t.type.Equals(type) && t.value.Equals(value);
     }
-    LinkedList<dynamic?> token2value(Token[] arr,int start,out int end)
+    LinkedList<object?> token2value(Token[] arr,int start,out int end)
     {
-        LinkedList<dynamic?> ret = new();
+        LinkedList<object?> ret = new();
         for (int i = start ; i < arr.Length ; i++)
         {
             TokenType type = arr[i].type;
@@ -189,7 +283,7 @@ public class Interpreter : IDisposable
             //이름
             if (type == TokenType.Name)
             {
-                if (search_variable(arr[i].value , out dynamic? v))
+                if (search_variable((string)arr[i].value , out dynamic? v))
                 {
                     if (v is VariableInterface vi)
                     {
@@ -236,17 +330,17 @@ public class Interpreter : IDisposable
 public class CommandLine
 {
     public string script;
-    public Token[]? tokens = null;
-    public bool Parse()
-    {
-        this.tokens = Parser.Tokenizer(script).ToArray();
-        if (tokens.Length > 0 && tokens.Last().type is TokenType.Error)
-            return true;
-        return false;
+    public Token[] tokens {
+        get => tok ?? Parse();
     }
-
+    private Token[] Parse()
+    {
+        return tok = Parser.Tokenizer(script).ToArray();
+    }
     public CommandLine(string str)
     {
         script = str;
     }
+
+    private Token[]? tok = null;
 }

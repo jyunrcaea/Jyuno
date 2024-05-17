@@ -1,6 +1,9 @@
 ﻿namespace Jyuno.Complier;
 
-public record Token(TokenType type,dynamic value);
+public record Token(TokenType type,object value)
+{
+    public override string ToString() => $"Type: {type}, Value: {value}";
+}
 
 public enum TokenType
 {

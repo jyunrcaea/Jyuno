@@ -8,7 +8,8 @@ public class Grammer
         {"repeat",KeywordType.Repeat },
         {"goto",KeywordType.Goto },
         {"func", KeywordType.Func },
-        {"end" , KeywordType.End}
+        {"end" , KeywordType.End},
+        {"else", KeywordType.Else }
     };
     public enum KeywordType
     {
@@ -17,7 +18,8 @@ public class Grammer
         Repeat,
         Goto,
         Func,
-        End
+        End,
+        Else
     }
 
     public static HashSet<char> Prefixs = new() {
@@ -25,7 +27,7 @@ public class Grammer
     };
 }
 
-public record ReturnInfo(dynamic? value)
+public record ReturnInfo(object? value)
 {
     public override string ToString()
     {

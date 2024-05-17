@@ -2,18 +2,18 @@
 
 public interface FunctionInterface
 {
-    public dynamic? Execute(params dynamic?[] args);
+    public object? Execute(params object?[] args);
 }
 
 public class NativeFunction : FunctionInterface
 {
-    public NativeFunction( Func<dynamic?[] , dynamic?> action)
+    public NativeFunction( Func<object?[] , object?> action)
     {
         func = action;
     }
 
-    Func<dynamic?[],dynamic?> func;
-    public dynamic? Execute(params dynamic?[] args) => func(args);
+    Func<object?[],object?> func;
+    public object? Execute(params object?[] args) => func(args);
 }
 
     
