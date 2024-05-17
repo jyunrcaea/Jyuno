@@ -1,102 +1,153 @@
 # Jyuno Language
 
-Jyuno ������ �� �ٿ� �ϳ��� ���ɾ �����Ҽ� �ִ°��� ��Ģ�Դϴ�.
+Jyuno 에서는 한 줄에 하나의 명령어만 실행할수 있는것이 원칙입니다.
 
-## ���(Constant)
-Jyuno���� �ǹ��ϴ� �����, ������ �ƴ� ������ �� ����ü�� �ǹ��մϴ�.<br>
-614, "Jyunni", true, null �� �̿� ���� ���� ������ �����մϴ�.<br>
-### ����
-#### ����
-������, �ܼ��� ���ڸ� ǥ���ϸ� �˴ϴ�. (��: ``6145020``)<br>
-�㳪, C# �������� long ������ �Ѿ ��� �����÷ο�/����÷ο찡 �ȴٴ� ���� �����ϼ���.
+## 상수(Constant)
+Jyuno에서 의미하는 상수는, 변수가 아닌 고정된 값 그자체를 의미합니다.<br>
+614, "Jyunni", true, null 등 이와 같은 값을 상수라고 정의합니다.<br>
+### 숫자
+#### 정수
+정수는 단순히 숫자를 표기하면 됩니다. (예: ``6145020``)  
+허나 C# 기준으로 long 범위를 넘어갈 경우 오버플로우/언더플로우가 된다는 점을 주의하세요.
+#### 유한소수
+유한소수도 (정수).(소수) 형식으로 표기하면 됩니다. (예: ``6.14``)  
+기본적으로 double 자료형으로 저장합니다.
 
-## ����(Variable)
-Jyuno������ ������ Python�� Javascript�� �� ���� ����Դϴ�.<br>
-Jyuno ������ Ư¡�� �Ʒ��� �����ϴ�.
-- ���� Ÿ��
-- Ÿ�Կ� ������ (1 + '2' = '12')
-- ���� ���� (�� �ļ���)
-### ����/����
-������ ����/������ ������ �����ϴ�.
+### 문자열
+문자열은 큰/작은 따옴표로 문자열 양쪽을 감싸면 됩니다. (예: ``'614project'``)  
+큰 따옴표나 작은 따옴표 둘중 편한대로 사용하면 됩니다, 하지만 양쪽 따옴표가 모두 동일해야합니다.  
+잘못된 예:
+- ``"jyunni'``
+- ``'Jyuno"``
+
+올바른 예:
+- ``'jyunrcaea'``
+- ``"hello world!"``
+
+문자열 내에서 따옴표를 표시하는 방법은 역슬래시(``\``) 기호를 사용하면 됩니다. (예: ``'I am \'Jyunni\'.'``)  
+역슬래시 기호가 있을경우 역슬래시 다음 문자를 그대로 포함합니다. (예: ``'backslash: \\, single quote: \', double quotes: \"'``)  
+허나 다음 문자가 'n'인경우 줄바꿈으로 변한되어 포함됩니다. (예: ``"first line\nsecond line"``)
+
+### 불리언(논리형)
+참은 ``true``, 거짓은 ``false`` 로 표기하면 됩니다.  
+
+### null (= void)
+null은 문자 그대로 ``null``로 표기하면 됩니다.
+
+Jyuno에서 재밌는 사실은 void 대신 null을 사용합니다.  
+그렇기에 console.write 같은 반환할 값이 없는 함수들은 모두 null을 반환합니다. 
+
+## 변수(Variable)
+Jyuno에서의 변수는 Python과 Javascript의 그 사이 어딘가입니다.<br>
+Jyuno 변수의 특징은 아래와 같습니다.
+- 동적 타입
+- 타입에 관대함 (1 + '2' = '12')
+- 삭제 가능 (곧 후술함)
+### 선언/대입
+변수의 선언/대입은 다음과 같습니다.
 ```
-(������) = (��)
+(변수명) = (값)
 ```
-Jyuno ������ ���ٸ� ���� ���� ����, �������� �ʴ� ������ ���� �����ҷ��� �ϸ�, �� ��� ����˴ϴ�.
-### ����
-������ ������ ������ ���� �̸� �ڿ� ��ȣ�� ������ ���Դϴ�.
+Jyuno 변수는 별다른 선언 과정 없이, 존재하지 않던 변수에 값을 대입할려고 하면, 그 즉시 선언됩니다.
+### 삭제
+변수의 삭제는 다음과 같이 이름 뒤에 등호만 붙히면 끝입니다.
 ```
-(������) =
+(변수명) =
 ```
-���⼭ Python�� del�� ��������, ���� ������ �����ҷ��� �ص� ������ �߻����� �ʽ��ϴ�.<br>
-���� ������ �����Ұ�� True�� ��ȯ�ϰ�, �׷��� ������ False�� ��ȯ�մϴ�.
-### ���
-����� �����ϴ� ����� ������ �����ϴ�. (~~������ ��������? ���~~)
+여기서 Python의 del과 차이점은, 없는 변수를 삭제할려고 해도 오류가 발생하지 않습니다.<br>
+만약 삭제가 성공할경우 True를 반환하고, 그렇지 않으면 False를 반환합니다.
+### 상수
+상수를 선선하는 방법은 다음과 같습니다. (~~변수를 뒤집으면? 상수~~)
 ```
-(�����) = (������)
+(상수값) = (변수명)
 ```
-�ش� ������ �̹� �����ϴ����� ���ο� ������� ����� ����Ǹ�, ���� ������ �����˴ϴ�. (�ٸ� ������� �����Ҽ��� �ֽ��ϴ�.)
-## �Լ�(Function)
-### ȣ���ϱ�
-�Լ��� �Ʒ��� ���� �������� �����Ҽ� �ֽ��ϴ�.
+해당 변수가 이미 존재하는지의 여부와 상관없이 상수로 선언되며, 대입 연산이 금지됩니다. (다른 상수값을 대입할수는 있습니다.)
+## 함수(Function)
+### 호출하기
+함수는 아래와 같은 유형으로 실행할수 있습니다.
 ```
-(�Լ���) (����1) (����2) ...
+(함수명) (인자1) (인자2) ...
 ```
-���ʿ� �Լ� �̸��� �Է��ϰ�, �� �ڿ� �Լ��� ���� ���ڸ� ���ʴ�� �־��ָ� �˴ϴ�!<br>
-��: ``console.write "hello {1}" "world!"``
+왼쪽에 함수 이름을 입력하고, 그 뒤에 함수에 넣을 인자를 차례대로 넣어주면 됩니다!<br>
+예: ``console.write "hello {1}" "world!"``
 <br><br>
-�׸��� �Լ����� ��ȯ�� ���� �����Ҽ��� �ֽ��ϴ�.
+그리고 함수에서 반환된 값을 저장할수도 있습니다.
 ```
-(����) = (�Լ���) (����1) (����2) ...
+(변수) = (함수명) (인자1) (인자2) ...
 ```
-��: ``a = add 10 20``
-### �����ϱ�
-Jyuno���� �Լ��� ������ ����ϱ� ������, ������ �����մϴ�.
+예: ``a = add 10 20``
+### 삭제하기
+Jyuno에서 함수는 변수로 취급하기 때문에, 삭제가 가능합니다.
 ```
-(�Լ���) =
+(함수명) =
 ```
-### ��ȯ���� ���ڷ� ����ϱ�
-Jyuno������ ��ȣ�� ���� ������ ���� ������� �Լ��� �����ؼ� ���� ���� �ٽ� �ٸ� �Լ��� �Ѱ� ���� �ֽ��ϴ�.
+### 반환값을 인자로 사용하기
+Jyuno에서는 괄호를 통해 다음과 같은 방법으로 함수를 실행해서 나온 값을 다시 다른 함수에 넘겨 쓸수 있습니다.
 ```
 console.write (add "hello! " (console.readline))
 ```
-��ȣ �������� �Ȱ��� ``(�Լ���) (����1) (����2)...`` ��Ģ�� ����˴ϴ�. ������ �����ٷ� �����ϸ� ���մϴ�.
+괄호 내에서는 똑같이 ``(함수명) (인자1) (인자2)...`` 규칙이 적용됩니다. 별개의 명령줄로 생각하면 편합니다.
+## 조건문
+### if
+Jyuno에서의 if문은 아래와 같은 형식을 띕니다. (들여쓰기는 필수가 아닙니다.)
+```
+if (값)
+   (실행할 코드)
+end
+```
+(값)이 null, false, 0이 아닌 경우 true로 판단되며 if와 end 사이의 코드가 실행되고,  
+그렇지 않은경우 false로 판단되며 end까지 건너뜁니다.
+### else
+Jyuno에서의 else는 아래와 같은 형식을 띕니다.
+```
+if (값)
+   (값이 참일때 실행할 코드)
+else
+   (값이 거짓일때 실행할 코드)
+end
+```
+(값)이 false로 판단되는 경우, else와 end사이의 코드가 실행됩니다.
+## 팁
+### 삭제 연산
+사실 Jyuno에서 삭제 연산이 별로 필요하지 않습니다. 삭제 연산 없이도 충분히 원하는 스크립트를 작성할수 있습니다.<br>
+또한, 함수에서 리턴할 경우, 함수 내에서 만들어진 지역 변수는 모두 삭제됩니다.<br>
+그렇기에 일관성 있는 코드 작성을 위해서는, 삭제 연산을 삼가하시길 바랍니다.
 
-## ��
-### ���� ����
-��� Jyuno���� ���� ������ ���� �ʿ����� �ʽ��ϴ�. ���� ���� ���̵� ����� ���ϴ� ��ũ��Ʈ�� �ۼ��Ҽ� �ֽ��ϴ�.<br>
-����, �Լ����� ������ ���, �Լ� ������ ������� ���� ������ ��� �����˴ϴ�.<br>
-�׷��⿡ �ϰ��� �ִ� �ڵ� �ۼ��� ���ؼ���, ���� ������ �ﰡ�Ͻñ� �ٶ��ϴ�.
-
-## ���ɾ�(command)
-�Ʒ� ���ɾ�� ��� Jyuno ���������Ͱ� �������� �ʽ��ϴ�.<br>
-Jyuno�� ����ϴ� C# ���α׷��� �Ϻ� Jyuno ���ɾ ��Ȱ��ȭ �Ҽ� �ֱ� ������, �ش� ���α׷��� ��� Jyuno ���ɾ �����ϴ��� Ȯ���ؾ� �մϴ�.
-### �⺻
-<b>�Ʒ� ���ɾ�� Jyuno���� �⺻������ ���ԵǸ�, �ݵ�� �����մϴ�.</b>
-- ����: ``int`` (0�� ��ȯ) �Ǵ� ``int (any)`` (�ٸ� Ÿ���� ���� int�� ��ȯ�մϴ�.)
-- �Ǽ�: ``double`` (0.0 �� ��ȯ) �Ǵ� ``double (any)`` (�ٸ� Ÿ���� ���� double�� ��ȯ�մϴ�.)
-- ���ڿ�: ``string`` (�� ���ڿ��� ��ȯ) �Ǵ� ``string (any)`` (�ٸ� Ÿ���� ���� string���� ��ȯ�մϴ�.)
-- ����: ``add (any) (any) (any) ...`` (������ ������� �־��� ���ڸ� ��� ����)
-- ����: ``sub (int|double) (int|double)`` �Ǵ� ``sub (string) (string)`` (���ڿ��� ���ϴ� ���ڿ��� ������)
-- ����: ``mul (int|double) (int|double) ...`` (������ ������� �־��� ���ڸ� ��� ����) �Ǵ� ``mul (string) (int)`` (���ڿ��� ���ϴ� Ƚ���� �ݺ���)
-- ������: ``div (int|double) (int|double)``
-- ������: ``mod (int|double) (int|double)``
-- null(���): ``null``
-- true(���): ``true``
-- false(���): ``false``
-### �ܼ�(Console)
-�ְܼ� ���õ� ���ɾ��Դϴ�.
-- ���: ``console.write (any)`` �Ǵ� ``console.write (string) (any) (any)``
-   (console.write�� C#�� Console.Write �Լ��� �״�� ����մϴ�. �׿����� ``console.write "hello {1}" 'jyunni'`` ���� ���ɾ ����Ҽ� �ֽ��ϴ�.)
-- �Է�: ``console.readline``
-- �ʱ�ȭ: ``console.clear``
-- ����(����): ``console.title = (string)``
-### ����(Math)
-���а� ���õ� ���ɾ��Դϴ�.
-- ����: ``math.abs (int|double)``
-- ����: ``math.sin (double)``
-- �ڻ���: ``math.cos (double)``
-- ź��Ʈ: ``math.tan (double)``
-- ����: ``math.pow (double) (double)``
-- �α� (���α�): ``math.log (double)``
-- �α� (�����α�): ``math.log2 (double)``
-- ���� (���): ``math.pi``
+## 명령어(command)
+아래 명령어는 모든 Jyuno 인터프리터가 지원하지 않습니다.<br>
+Jyuno를 사용하는 C# 프로그램이 일부 Jyuno 명령어를 비활성화 할수 있기 때문에, 해당 프로그램이 어느 Jyuno 명령어를 지원하는지 확인해야 합니다.
+### 기본
+<b>아래 명령어는 Jyuno에서 기본적으로 포함되며, 반드시 지원합니다.</b>
+- 정수: ``int`` (0을 반환) 또는 ``int (any)`` (다른 타입의 값을 int로 변환합니다.)
+- 실수: ``double`` (0.0 을 반환) 또는 ``double (any)`` (다른 타입의 값을 double로 변환합니다.)
+- 문자열: ``string`` (빈 문자열을 반환) 또는 ``string (any)`` (다른 타입의 값을 string으로 변환합니다.)
+- 덧셈: ``add (any) (any) (any) ...`` (개수에 상관없이 주어진 인자를 모두 더함)
+- 뺄셈: ``sub (int|double) (int|double)`` 또는 ``sub (string) (string)`` (문자열에 원하는 문자열을 제거함)
+- 곱셈: ``mul (int|double) (int|double) ...`` (개수에 상관없이 주어진 인자를 모두 곱함) 또는 ``mul (string) (int)`` (문자열을 원하는 횟수로 반복함)
+- 나눗셈: ``div (int|double) (int|double)``
+- 나머지: ``mod (int|double) (int|double)``
+- 비교: ``equal (any) (any) ...`` (개수에 상관없이 주어진 모든 인자를 비교합니다. 모두 동일하면 true, 하나라도 서로 다를경우 false를 반환합니다.) 
+- null(상수): ``null``
+- true(상수): ``true``
+- false(상수): ``false``
+### 콘솔(Console)
+콘솔과 관련된 명령어입니다.
+- 출력: ``console.write (any)`` 또는 ``console.write (string) (any) (any)``
+   (console.write는 C#의 Console.Write 함수를 그대로 사용합니다. 그에따라 ``console.write "hello {1}" 'jyunni'`` 같은 명령어를 사용할수 있습니다.)
+- 입력: ``console.readline``
+- 초기화: ``console.clear``
+- 제목(변수): ``console.title = (string)``
+### 수학(Math)
+수학과 관련된 명령어입니다.
+- 절댓값: ``math.abs (int|double)``
+- 사인: ``math.sin (double)``
+- 코사인: ``math.cos (double)``
+- 탄젠트: ``math.tan (double)``
+- 제곱: ``math.pow (double) (double)``
+- 로그 (상용로그): ``math.log (double)``
+- 로그 (이진로그): ``math.log2 (double)``
+- 파이 (상수): ``math.pi``
+### 파일(File)
+파일과 관련된 명령어입니다.
+- 파일 존재 여부: ``file.exist (string)``
+- 디렉토리 존재 여부: ``directory.exist (string)``
