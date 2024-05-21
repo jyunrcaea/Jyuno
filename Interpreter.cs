@@ -351,7 +351,7 @@ public class Interpreter : IDisposable
                 //예약된 키워드가 있다면 이동
                 if (keyword_book.TryPop(out int move))
                 {
-                    CurrentExecuteLine = move;
+                    CurrentExecuteLine = move-1;
                 }
                 break;
             case KeywordType.While:
@@ -359,12 +359,47 @@ public class Interpreter : IDisposable
                 //실행해야 한다면 키워드 예약 스택에 푸시
                 if (Parser.IsTrue(ret))
                 {
-                    keyword_book.Push(CurrentExecuteLine-1);
+                    keyword_book.Push(CurrentExecuteLine);
                 } else
                 {
                     //실행하지 말아야 한다면 end까지 건너뛰기
                     skip();
                 }
+                break;
+            case KeywordType.Repeat:
+                //캐싱이 되어있다면, 그 값이 0이 될때까지 반복
+                if (scripts[CurrentExecuteLine].cache is not null)
+                {
+                    long n = (long)scripts[CurrentExecuteLine].cache;
+                    //이미 0이라면 더이상 실행하지 않아도 됨. 중단
+                    if (--n <= 0)
+                    {
+                        skip();
+                        break;
+                    }
+                    //그렇지 않으면 계속 실행해야함
+                    scripts[CurrentExecuteLine].cache = n;
+                    keyword_book.Push(CurrentExecuteLine);
+                    break;
+                } else
+                {
+                    //반복 횟수는 0 또는 자연수여야만 함
+                    ret = token2value(tokens,1, out _);
+                    long n;
+                    //실행할수 없다면.
+                    if (ret.Count is 0 || ret.First() is not long || (n = (long)(ret.First() ?? -614)) <= 0)
+                    {
+                        skip();
+                        break;
+                    }
+                    //그렇지 않으면 처음이니까, 반복할 횟수 캐싱
+                    scripts[CurrentExecuteLine].cache = n;
+                    keyword_book.Push(CurrentExecuteLine);
+                }
+                break;
+            case KeywordType.Break:
+                skip();
+                keyword_book.TryPop(out _);
                 break;
         }
         return null;
