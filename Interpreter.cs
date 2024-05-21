@@ -1,5 +1,6 @@
 ﻿using Jyuno.Complier;
 using Jyuno.Language;
+using System.Runtime.ExceptionServices;
 
 namespace Jyuno;
 
@@ -70,65 +71,7 @@ public class Interpreter : IDisposable
         if (tokens.Length is 0)
             return null;
         else if (tokens[0].type is TokenType.Keyword)
-        {
-            switch ((Grammer.KeywordType)tokens[0].value)
-            {
-                //반환
-                case Grammer.KeywordType.Return:
-                    return new ReturnInfo(token2value(tokens , 1, out _));
-                //이동
-                case Grammer.KeywordType.Goto:
-                    var ret = token2value(tokens , 1 , out _);
-                    if (ret.Count is 0)
-                    {
-                        throw new JyunoException("이동할 값을 넣지 않았습니다.");
-                    }
-                    if (ret.First() is int goto_line)
-                    {
-                        if (goto_line < 0)
-                            throw new JyunoException("실행 위치를 음수로 이동할수 없습니다.");
-                        CurrentExecuteLine = goto_line;
-                    }
-                    else
-                        throw new JyunoException("실행 위치는 음이 아닌 정수여야 합니다.");
-                    break;
-                //만약
-                case Grammer.KeywordType.If:
-                    ret = token2value(tokens , 1 , out _);
-                    bool enable = ret.Count > 0;
-                    if (enable)
-                    {
-                        var first = ret.First();
-                        if (
-                            first is null ||
-                            (first is long l && l.Equals(0)) ||
-                            (first is bool b && b == false)
-                        )
-                        {
-                            enable = false;
-                        }
-                    }
-                    //실행하지 않을꺼라면 else 또는 end를 찾을때까지 건너뛰기
-                    if (!enable)
-                    {
-                        if (skip(Grammer.KeywordType.Else, Grammer.KeywordType.End) is GrammerError ge)
-                        {
-                            return ge;
-                        }
-                    }
-                    //실행할꺼면 어짜피 else 마주칠때까지 실행하면 됨
-                    break;
-                case Grammer.KeywordType.Else:
-                    if (skip(Grammer.KeywordType.End) is GrammerError ger)
-                    {
-                        return ger;
-                    }
-                    break;
-                case Grammer.KeywordType.End:
-                    return new GrammerError(CurrentExecuteLine,"중단될수 없습니다.");
-            }
-            return null;
-        }
+            return process_keyword(tokens , line);
        return execute(tokens , 0,out _);
     }
     public object? Run(int start = 0)
@@ -145,30 +88,54 @@ public class Interpreter : IDisposable
         return null;
     }
 
-    GrammerError? skip(params object[] end)
+    GrammerError? skip(object? antoher_endkey = null)
     {
-        Token[] tk;
-        object? first;
-        do
+        int skip = 0;
+        while(true)
         {
-            //더이상 없다면... 그거대로 문제네
-            if (++CurrentExecuteLine >= scripts.Count)
+            //스크립트의 끝에 도달한 경우
+            if (++CurrentExecuteLine > scripts.Count)
             {
-                return new GrammerError(CurrentExecuteLine , "종료 키워드가 없습니다.");
+                return new GrammerError(CurrentExecuteLine, "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.");
             }
-
-            tk = scripts[CurrentExecuteLine].tokens;
-            if (tk.Length > 0 && tk.First().type is TokenType.Error)
+            //길이가 0이면 건너뛰기
+            Token[] ret = scripts[CurrentExecuteLine].tokens;
+            if (ret.Length is 0)
             {
-                return new GrammerError(CurrentExecuteLine , (string)tk.First().value);
+                continue;
             }
-            first = tk.Length is 0 ? null : tk.First().value;
+            //키워드가 아니면 건너뛰기
+            Token first = ret[0];
+            if (first.type != TokenType.Keyword)
+            {
+                continue;
+            }
+            //if/while/repeat 등 조건문 키워드라면 end 한번이상 건너뛰기
+            if (Grammer.Conditonals.Contains((KeywordType)first.value))
+            {
+                //근데 캐싱된게 있다면 즉시 건너뛰기
+                if (scripts[CurrentExecuteLine].cache is int cache)
+                {
+                    CurrentExecuteLine = cache;
+                }
+                else skip++; //그렇지 않으면 스킵 횟수만 증가
+                continue;
+            }
+            //만약 end 키워드를 마주쳤다면
+            if (first.value.Equals(KeywordType.End))
+            {
+                //현재 skip 카운팅이 0 초과라면 건너뛰기
+                if (skip > 0)
+                    skip--;
+                else
+                    return null; //그렇지 않으면 즉시 종료
+            }
+            //만약 종료 키워드를 찾았다면 (그리고 skip이 0이라면)
+            if (first.value.Equals(antoher_endkey) && skip is 0)
+            {
+                return null; //종료
+            }
         }
-        while (
-            first is null ||
-            !end.Contains(first)
-        );
-        return null;
     }
     object? execute(Token[] tokens , int start,out int end)
     {
@@ -317,6 +284,91 @@ public class Interpreter : IDisposable
         end = arr.Length;
         return ret;
     }
+    Stack<int> keyword_book = new();
+    object? process_keyword(in Token[] tokens,in int line)
+    {
+        switch ((KeywordType)tokens[0].value)
+        {
+            //반환
+            case KeywordType.Return:
+                return new ReturnInfo(token2value(tokens , 1 , out _));
+            //이동
+            case KeywordType.Goto:
+                var ret = token2value(tokens , 1 , out _);
+                if (ret.Count is 0)
+                {
+                    throw new JyunoException("이동할 값을 넣지 않았습니다.");
+                }
+                if (ret.First() is int goto_line)
+                {
+                    if (goto_line < 0)
+                        throw new JyunoException("실행 위치를 음수로 이동할수 없습니다.");
+                    CurrentExecuteLine = goto_line;
+                }
+                else
+                    throw new JyunoException("실행 위치는 음이 아닌 정수여야 합니다.");
+                break;
+            //만약
+            case KeywordType.If:
+                #region 변수
+                CommandLine cmd;
+                #endregion
+                //실행하지 않을꺼라면 else 또는 end를 찾을때까지 건너뛰기
+                if (!Parser.IsTrue(token2value(tokens , 1 , out _)))
+                {
+                    //만약 캐싱한 값이 있다면 즉시 이동
+                    cmd = scripts[line];
+                    if (cmd.cache is int)
+                    {
+                        CurrentExecuteLine = (int)cmd.cache;
+                        break;
+                    }
+                    //그렇지 않으면 직접 else 또는 end를 찾은후 캐싱
+                    if (skip(KeywordType.Else) is GrammerError ge)
+                    {
+                        return ge;
+                    }
+                    cmd.cache = CurrentExecuteLine;
+                }
+                //실행할꺼면 어짜피 else 마주칠때까지 실행하면 됨
+                break;
+            case KeywordType.Else:
+                //만약 캐싱한 값이 있다면?
+                cmd = scripts[line];
+                if (cmd.cache is int next)
+                {
+                    CurrentExecuteLine = next;
+                    break;
+                }
+                //없다면 직접 스킵후 캐싱
+                if (skip() is GrammerError ger)
+                {
+                    return ger;
+                }
+                cmd.cache = CurrentExecuteLine;
+                break;
+            case KeywordType.End:
+                //예약된 키워드가 있다면 이동
+                if (keyword_book.TryPop(out int move))
+                {
+                    CurrentExecuteLine = move;
+                }
+                break;
+            case KeywordType.While:
+                ret = token2value(tokens , 1 , out _);
+                //실행해야 한다면 키워드 예약 스택에 푸시
+                if (Parser.IsTrue(ret))
+                {
+                    keyword_book.Push(CurrentExecuteLine-1);
+                } else
+                {
+                    //실행하지 말아야 한다면 end까지 건너뛰기
+                    skip();
+                }
+                break;
+        }
+        return null;
+    }
 
     public void Dispose()
     {
@@ -329,18 +381,19 @@ public class Interpreter : IDisposable
 
 public class CommandLine
 {
-    public string script;
-    public Token[] tokens {
-        get => tok ?? Parse();
-    }
-    private Token[] Parse()
-    {
-        return tok = Parser.Tokenizer(script).ToArray();
-    }
     public CommandLine(string str)
     {
         script = str;
     }
+    public object? cache = null;
+    public string script;
+    public Token[] tokens {
+        get => tok ?? Parse();
+    }
 
+    private Token[] Parse()
+    {
+        return tok = Parser.Tokenizer(script).ToArray();
+    }
     private Token[]? tok = null;
 }

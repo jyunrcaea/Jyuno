@@ -1,4 +1,6 @@
-﻿namespace Jyuno.Language;
+﻿using Jyuno.Complier;
+
+namespace Jyuno.Language;
 
 public static class JyunoCommands
 {
@@ -92,6 +94,7 @@ public static class JyunoCommands
             }
             return true;
         });
+        dict.AddFunction("bool" , args => Parser.IsTrue(args));
     }
     public static void AddConsole(VariableDictionary dict)
     {
@@ -196,15 +199,11 @@ public static class JyunoCommands
         dict.AddFunction("file.write" , args => {
             if (args.Length < 2)
                 throw new JyunoException("파일의 경로, 그리고 내용을 입력해야합니다.");
-            if (File.Exists((string)(args[0] ?? throw null_exception)))
-            {
-                File.WriteAllText((string)(args[0] ?? throw null_exception) , (string?)(args[1] ?? throw null_exception));
-                return true;
-            }
-            return false;
+            File.WriteAllText((string)(args[0] ?? throw null_exception) , (string?)(args[1] ?? throw null_exception));
+            return null;
         });
         dict.AddFunction("directory.files" , args => {
-            if ((args[0] ?? throw null_exception) is string path)
+            if (args.Length > 0 && (args[0] ?? throw null_exception) is string path)
             {
                 if (!Directory.Exists((string?)(args[0] ?? throw null_exception)))
                     return false;
@@ -216,9 +215,9 @@ public static class JyunoCommands
             return Directory.GetFiles(path);
         });
         dict.AddFunction("directory.list" , args => {
-            if ((args[0] ?? throw null_exception) is string path)
+            if (args.Length > 0 && (args[0] ?? throw null_exception) is string path)
             {
-                if (!Directory.Exists((string?)(args[0] ?? throw null_exception)))
+                if (!Directory.Exists(path))
                     return false;
             } else
             {
@@ -233,6 +232,16 @@ public static class JyunoCommands
                 return true;
             }
             throw new JyunoException("기존 경로, 그리고 이동할 새 경로를 입력하지 않았습니다.");
+        });
+        dict.AddFunction("file.remove" , args => {
+            if (args.Length is 0)
+            {
+                throw new JyunoException("제거할 파일의 경로를 입력해야 합니다.");
+            }
+            string path = (string)(args[0] ?? throw null_exception);
+            if (!File.Exists(path)) return false;
+            File.Delete(path);
+            return true;
         });
     }
 

@@ -136,5 +136,36 @@ public class Parser
             }
         }
     }
+
+    public static bool IsTrue(in LinkedList<object?> target)
+    {
+        if (target.Count is 0)
+            return false;
+        else
+            return IsTrue(target.First());
+    }
+    public static bool IsTrue(in object? target)
+    {
+        if (target is object obj)
+        {
+            if (
+                (obj is long l && l == 0) ||
+                (obj is string s && string.IsNullOrEmpty(s)) ||
+                (obj is bool b && b is false) ||
+                (obj is double d && d == 0) ||
+                (obj is float f && f == 0) ||
+                (obj is int i && i == 0) ||
+                (obj is char c && c == '\0')
+            )
+            {
+                return false;
+            }
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
 }
 
