@@ -79,12 +79,6 @@ public class RunTests
     }
 
     [Fact]
-    public void Func_IsNotSupported()
-    {
-        Assert.Throws<JyunoException>(() => Script.Run("func"));
-    }
-
-    [Fact]
     public void Goto_ToEnd_FinishesScript()
     {
         var (_, output) = Script.Run("goto 2", "out 'skipped'");

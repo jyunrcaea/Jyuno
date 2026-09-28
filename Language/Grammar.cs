@@ -11,7 +11,9 @@ public class Grammar
         {"end" , KeywordType.End},
         {"else", KeywordType.Else },
         {"while", KeywordType.While },
-        {"break", KeywordType.Break }
+        {"break", KeywordType.Break },
+        {"param", KeywordType.Param },
+        {"endfunc", KeywordType.EndFunc }
     };
 
     public static HashSet<char> Prefixes = new() {
@@ -52,5 +54,7 @@ public enum KeywordType
     End,
     Else,
     While,
-    Break
+    Break,
+    Param,
+    EndFunc
 }

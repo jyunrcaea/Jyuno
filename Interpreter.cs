@@ -80,6 +80,10 @@ public class Interpreter : IDisposable
         {
             return execute_line(line , false);
         }
+        catch (GrammarErrorException e)
+        {
+            return e.Error;
+        }
         finally
         {
             CurrentExecuteLine = current;
@@ -93,7 +97,7 @@ public class Interpreter : IDisposable
         running = true;
         //스크립트가 바뀌었을수 있으므로 블록 정보를 새로 계산
         blocks = null;
-        repeat_counts.Clear();
+        top_repeat_counts.Clear();
         try
         {
             for(CurrentExecuteLine = start ;CurrentExecuteLine<scripts.Count ; CurrentExecuteLine++)
@@ -106,6 +110,11 @@ public class Interpreter : IDisposable
                     return ret;
             }
             return null;
+        }
+        catch (GrammarErrorException e)
+        {
+            //함수 안에서 발생한 문법 오류
+            return e.Error;
         }
         finally
         {
@@ -301,8 +310,9 @@ public class Interpreter : IDisposable
             blocks = new BlockMap(scripts);
         return blocks;
     }
-    //repeat 줄 → 남은 반복 횟수
-    Dictionary<int , long> repeat_counts = new();
+    //repeat 줄 → 남은 반복 횟수 (함수 호출마다 따로 관리해야 재귀 호출에서도 섞이지 않음)
+    Dictionary<int , long> top_repeat_counts = new();
+    Dictionary<int , long> repeat_counts => frames.Count > 0 ? frames.Peek().RepeatCounts : top_repeat_counts;
     //다음에 실행할 줄을 정함 (Run의 반복문에서 1을 더하므로 1을 뺌)
     void jump(int next_line) => CurrentExecuteLine = next_line - 1;
     KeywordType keyword_of(int line) => (KeywordType)scripts[line].tokens[0].value;
@@ -316,8 +326,6 @@ public class Interpreter : IDisposable
             var ret = token2value(tokens , 1 , out _);
             return new ReturnInfo(ret.Count is 0 ? null : ret.First());
         }
-        if (keyword is KeywordType.Func)
-            throw new JyunoException("func 키워드는 아직 지원하지 않습니다.");
         //나머지 키워드는 실행 위치를 옮기므로 Run()으로 실행할 때만 사용 가능
         if (!flow)
             throw new JyunoException($"'{keyword.ToString().ToLowerInvariant()}' 키워드는 Run()으로 실행할 때만 사용할수 있습니다.");
@@ -339,6 +347,9 @@ public class Interpreter : IDisposable
                     throw new JyunoException("실행 위치를 음수로 이동할수 없습니다.");
                 if (goto_line > scripts.Count)
                     throw new JyunoException("실행 위치가 스크립트의 범위를 벗어났습니다.");
+                //함수 안팎으로는 이동할수 없음
+                if ((goto_line < scripts.Count ? map.Owner[goto_line] : -1) != map.Owner[line])
+                    throw new JyunoException("goto로 함수 안팎을 넘나들수 없습니다.");
                 jump((int)goto_line);
                 break;
             //만약
@@ -397,38 +408,143 @@ public class Interpreter : IDisposable
                 repeat_counts.Remove(map.Pair[loop_end]);
                 jump(loop_end + 1);
                 break;
+            //함수 정의: 이름에 함수를 저장하고 endfunc 다음 줄로 건너뛰기
+            case KeywordType.Func:
+                if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
+                    throw new JyunoException("func 다음에는 함수 이름 하나만 와야 합니다.");
+                substitute_variable((string)tokens[1].value , new JyunoFunction(this , line , map.Pair[line]));
+                jump(map.Pair[line] + 1);
+                break;
+            //파라미터: 몇번째 param인지에 따라 인자를 받음 (인자가 부족하면 null)
+            case KeywordType.Param:
+                if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
+                    throw new JyunoException("param 다음에는 파라미터 이름 하나만 와야 합니다.");
+                if (frames.Count is 0)
+                    throw new JyunoException("param은 함수가 호출되었을 때만 사용할수 있습니다.");
+                object?[] args = frames.Peek().Args;
+                int index = map.ParamIndex[line];
+                substitute_variable((string)tokens[1].value , new JyunoVariable(index < args.Length ? args[index] : null));
+                break;
+            //함수의 끝 (함수 본문은 이 줄에 도달하면 끝남)
+            case KeywordType.EndFunc:
+                break;
         }
         return null;
     }
 
-    //스크립트를 한번 훑어서 if/while/repeat 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
+    //함수 호출 정보 (인자, 반복 횟수)
+    sealed class CallFrame
+    {
+        public CallFrame(object?[] args)
+        {
+            Args = args;
+        }
+        public readonly object?[] Args;
+        public readonly Dictionary<int , long> RepeatCounts = new();
+    }
+    Stack<CallFrame> frames = new();
+    //무한 재귀로 프로그램이 죽지 않도록 제한
+    public const int MaxCallDepth = 200;
+
+    //스크립트에서 func로 만든 함수
+    sealed class JyunoFunction : FunctionInterface
+    {
+        public JyunoFunction(Interpreter interpreter , int line , int end)
+        {
+            this.interpreter = interpreter;
+            this.line = line;
+            this.end = end;
+        }
+        readonly Interpreter interpreter;
+        readonly int line, end;
+        public object? Execute(params object?[] args) => interpreter.call_function(line , end , args);
+    }
+    object? call_function(int line , int end , object?[] args)
+    {
+        if (frames.Count >= MaxCallDepth)
+            throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
+        int current = CurrentExecuteLine;
+        frames.Push(new CallFrame(args));
+        //함수 안에서 만든 변수는 함수가 끝나면 사라짐
+        Locals.Push(new());
+        try
+        {
+            for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
+            {
+                var ret = execute_line(CurrentExecuteLine , true);
+                if (ret is ReturnInfo ri)
+                    return ri.value;
+                if (ret is GrammarError error)
+                    throw new GrammarErrorException(error);
+            }
+            return null;
+        }
+        finally
+        {
+            Locals.Pop();
+            frames.Pop();
+            CurrentExecuteLine = current;
+        }
+    }
+    //함수 안에서 발생한 문법 오류를 Run()/ExecuteLine()까지 전달
+    sealed class GrammarErrorException : JyunoException
+    {
+        public GrammarErrorException(GrammarError error) : base(error.ToString())
+        {
+            Error = error;
+        }
+        public readonly GrammarError Error;
+    }
+
+    //스크립트를 한번 훑어서 if/while/repeat/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
     sealed class BlockMap
     {
-        //if → else(없다면 end), else → end, while/repeat → end, end → 여는 키워드, break → 반복문의 end
+        //if → else(없다면 end), else → end, while/repeat → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
         public readonly int[] Pair;
         //블록 구조가 잘못된 줄의 오류 메시지
         public readonly string?[] Errors;
+        //각 줄이 속한 가장 안쪽 func 줄 (함수 밖이라면 -1)
+        public readonly int[] Owner;
+        //param 줄이 함수의 몇번째 파라미터인지
+        public readonly int[] ParamIndex;
         public int Count => Pair.Length;
 
         public BlockMap(List<CommandLine> scripts)
         {
             Pair = new int[scripts.Count];
             Errors = new string?[scripts.Count];
+            Owner = new int[scripts.Count];
+            ParamIndex = new int[scripts.Count];
             Array.Fill(Pair , -1);
             Stack<int> opened = new();
             List<(int line, int loop)> breaks = new();
+            Dictionary<int , int> param_counts = new();
             KeywordType? keyword_at(int line)
             {
                 Token[] tokens = scripts[line].tokens;
                 return tokens.Length > 0 && tokens[0].type is TokenType.Keyword ? (KeywordType)tokens[0].value : null;
             }
+            //닫히지 않은 블록 표시
+            void unclosed(int line)
+            {
+                if (keyword_at(line) is KeywordType.Func)
+                {
+                    Errors[line] = "func 키워드는 endfunc 키워드로 종료 표시가 있어야 합니다.";
+                    return;
+                }
+                Errors[line] = "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.";
+                //else가 있는 if라면 else도 오류
+                if (Pair[line] >= 0)
+                    Errors[Pair[line]] = Errors[line];
+            }
 
             for (int line = 0 ; line < scripts.Count ; line++)
             {
+                Owner[line] = opened.FirstOrDefault(o => keyword_at(o) is KeywordType.Func , -1);
                 KeywordType? keyword = keyword_at(line);
                 if (keyword is null)
                     continue;
-                if (Grammar.Conditionals.Contains(keyword.Value))
+                if (keyword is KeywordType.Func || Grammar.Conditionals.Contains(keyword.Value))
                 {
                     opened.Push(line);
                     continue;
@@ -443,11 +559,13 @@ public class Interpreter : IDisposable
                             Errors[line] = "else는 if와 end 사이에 한번만 쓸수 있습니다.";
                         break;
                     case KeywordType.End:
-                        if (!opened.TryPop(out int opener))
+                        //func는 end가 아닌 endfunc로 닫아야 함
+                        if (!opened.TryPeek(out int opener) || keyword_at(opener) is KeywordType.Func)
                         {
                             Errors[line] = "end와 짝이 되는 if, while, repeat 키워드가 없습니다.";
                             break;
                         }
+                        opened.Pop();
                         //else가 있는 if라면 else가 end를 가리킴
                         if (Pair[opener] >= 0)
                             Pair[Pair[opener]] = line;
@@ -455,24 +573,55 @@ public class Interpreter : IDisposable
                             Pair[opener] = line;
                         Pair[line] = opener;
                         break;
+                    case KeywordType.EndFunc:
+                        int func = Owner[line];
+                        if (func < 0)
+                        {
+                            Errors[line] = "endfunc와 짝이 되는 func 키워드가 없습니다.";
+                            break;
+                        }
+                        //함수 안에서 닫히지 않은 블록
+                        while (opened.Peek() != func)
+                            unclosed(opened.Pop());
+                        opened.Pop();
+                        Pair[func] = line;
+                        Pair[line] = func;
+                        break;
                     case KeywordType.Break:
-                        //가장 안쪽 반복문 (반복문의 end는 아직 모르므로 나중에 연결)
-                        int loop = opened.FirstOrDefault(o => keyword_at(o) is not KeywordType.If , -1);
+                        //가장 안쪽 반복문 (함수 밖의 반복문은 제외, 반복문의 end는 아직 모르므로 나중에 연결)
+                        int loop = -1;
+                        foreach (int o in opened)
+                        {
+                            KeywordType? kind = keyword_at(o);
+                            if (kind is KeywordType.Func)
+                                break;
+                            if (kind is not KeywordType.If)
+                            {
+                                loop = o;
+                                break;
+                            }
+                        }
                         if (loop < 0)
                             Errors[line] = "break는 반복문(while, repeat) 안에서만 쓸수 있습니다.";
                         else
                             breaks.Add((line , loop));
                         break;
+                    case KeywordType.Param:
+                        //함수의 몇번째 param인지 기록
+                        if (Owner[line] < 0)
+                        {
+                            Errors[line] = "param은 func와 endfunc 사이에서만 쓸수 있습니다.";
+                            break;
+                        }
+                        param_counts.TryGetValue(Owner[line] , out int index);
+                        ParamIndex[line] = index;
+                        param_counts[Owner[line]] = index + 1;
+                        break;
                 }
             }
-            //end로 닫히지 않은 블록
+            //end/endfunc로 닫히지 않은 블록
             foreach (int line in opened)
-            {
-                Errors[line] = "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.";
-                //else가 있는 if라면 else도 오류
-                if (Pair[line] >= 0)
-                    Errors[Pair[line]] = Errors[line];
-            }
+                unclosed(line);
             foreach (var (line , loop) in breaks)
             {
                 if (Errors[loop] is null)
