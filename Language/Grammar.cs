@@ -1,6 +1,6 @@
 ﻿namespace Jyuno.Language;
 
-public class Grammer
+public class Grammar
 {
     public static Dictionary<string , KeywordType> Keywords = new() {
         {"if", KeywordType.If },
@@ -14,11 +14,11 @@ public class Grammer
         {"break", KeywordType.Break }
     };
 
-    public static HashSet<char> Prefixs = new() {
+    public static HashSet<char> Prefixes = new() {
         ':', '[', ']', '+', '-', '*','/','~','@','=','<','>', '(' ,')'
     };
 
-    public static HashSet<KeywordType> Conditonals = new() {
+    public static HashSet<KeywordType> Conditionals = new() {
         KeywordType.If,
         KeywordType.While,
         KeywordType.Repeat
@@ -33,7 +33,7 @@ public record ReturnInfo(object? value)
     }
 }
 
-public record GrammerError(int Line,string Message)
+public record GrammarError(int Line,string Message)
 {
     public override string ToString()
     {

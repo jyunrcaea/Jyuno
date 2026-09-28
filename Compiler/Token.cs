@@ -1,4 +1,4 @@
-﻿namespace Jyuno.Complier;
+﻿namespace Jyuno.Compiler;
 
 public record Token(TokenType type,object value)
 {
