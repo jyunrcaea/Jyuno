@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Jyuno", "Jyuno.csproj", "{8
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JyunoPrompt", "..\JyunoPrompt\JyunoPrompt.csproj", "{F95D2652-43C6-41EA-AED2-942786C80201}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jyuno.Tests", "Jyuno.Tests\Jyuno.Tests.csproj", "{F7160A05-6BF4-4CF7-8051-0C014687130D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{F95D2652-43C6-41EA-AED2-942786C80201}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F95D2652-43C6-41EA-AED2-942786C80201}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F95D2652-43C6-41EA-AED2-942786C80201}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F7160A05-6BF4-4CF7-8051-0C014687130D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F7160A05-6BF4-4CF7-8051-0C014687130D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F7160A05-6BF4-4CF7-8051-0C014687130D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F7160A05-6BF4-4CF7-8051-0C014687130D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

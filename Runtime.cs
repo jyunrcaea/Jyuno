@@ -1,4 +1,5 @@
 ﻿using Jyuno.Language;
+using System.Runtime.CompilerServices;
 
 namespace Jyuno;
 
@@ -14,7 +15,8 @@ public class Runtime
         if (create.HasFlag(AddJyunoCommandType.File))
             JyunoCommands.AddFile(Global);
     }
-    internal VariableDictionary Global = new();
+    //인터프리터가 다른 스레드에서 읽을수 있으므로, 항상 lock (Global) 안에서 사용해야 함
+    internal readonly VariableDictionary Global = new();
     public bool AddFunction(string name,Func<object?[],object?> func)
     {
         lock (Global)
@@ -29,13 +31,22 @@ public class Runtime
             return Global.AddVariable(name , get , set);
         }
     }
-    public HashSet<Interpreter> Interpreters { get; } = new();
+    //Dispose 하지 않은 인터프리터도 GC가 수거할수 있도록 약한 참조로 보관 (스레드 안전)
+    readonly ConditionalWeakTable<Interpreter , object> interpreters = new();
+    static readonly object alive = new();
+    /// <summary>
+    /// 이 런타임에서 생성된 인터프리터 중, 아직 Dispose 되지 않았고 사용중인 인터프리터 목록입니다.
+    /// </summary>
+    public IReadOnlyCollection<Interpreter> Interpreters => interpreters.Select(pair => pair.Key).ToList();
     public Interpreter Create(string[]? script = null)
     {
         Interpreter interpret = new(this , script ?? Array.Empty<string>());
-        lock(Interpreters)
-            Interpreters.Add(interpret);
+        interpreters.Add(interpret , alive);
         return interpret;
+    }
+    internal void RemoveInterpreter(Interpreter interpreter)
+    {
+        interpreters.Remove(interpreter);
     }
 
     [Flags]
