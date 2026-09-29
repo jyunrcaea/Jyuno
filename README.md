@@ -23,6 +23,12 @@ ironpython을 사용한 python 모듈을 실행하거나, C#/F# 모듈을 직접
 ## 언어
 [Jyuno Language](/Language/README.md) 를 참고하세요.
 
+## 설치
+NuGet에서 설치할수 있습니다.
+```
+dotnet add package Jyuno
+```
+
 ## 실행
 해당 라이브러리를 포함하여 사용하면 됩니다.
 
@@ -51,3 +57,10 @@ Jyuno의 코드를 직접 실행하는 실행기입니다. 인터프리터 내�
 dotnet test Jyuno.Tests
 ```
 
+## 릴리즈
+``v1.2.3`` 형식의 태그를 푸시하면 GitHub Actions가 테스트 후 NuGet에 배포하고 GitHub 릴리즈를 만듭니다. (``v1.2.3-beta.1`` 처럼 ``-``가 붙으면 프리릴리즈)
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+저장소 설정의 Secrets에 nuget.org에서 발급한 API 키를 ``NUGET_API_KEY`` 이름으로 등록해야 합니다.

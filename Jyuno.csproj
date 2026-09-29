@@ -8,4 +8,24 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);Jyuno.Tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
+  <!-- NuGet 패키지 정보 (버전은 릴리즈 워크플로우에서 태그로 지정) -->
+  <PropertyGroup>
+    <PackageId>Jyuno</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>jyunrcaea</Authors>
+    <Description>C# 프로그램에 안전한 플러그인(스크립트) 기능을 쉽게 추가하기 위한 작고 가벼운 언어 Jyuno의 인터프리터입니다.</Description>
+    <PackageTags>jyuno;script;scripting;interpreter;plugin;language</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/jyunrcaea/Jyuno</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/jyunrcaea/Jyuno</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
 </Project>
