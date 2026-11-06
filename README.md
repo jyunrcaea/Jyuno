@@ -63,4 +63,5 @@ dotnet test Jyuno.Tests
 git tag v1.0.0
 git push origin v1.0.0
 ```
-저장소 설정의 Secrets에 nuget.org에서 발급한 API 키를 ``NUGET_API_KEY`` 이름으로 등록해야 합니다.
+NuGet 배포는 API 키 대신 [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing)을 사용합니다.  
+nuget.org의 Trusted Publishing 정책(저장소 ``jyunrcaea/Jyuno``, 워크플로우 ``release.yml``, 환경 ``production``)이 워크플로우와 일치해야 합니다.

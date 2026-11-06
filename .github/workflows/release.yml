@@ -1,5 +1,6 @@
 # v1.2.3 같은 태그를 푸시하면 테스트 → NuGet 배포 → GitHub 릴리즈 생성
-# 필요한 시크릿: NUGET_API_KEY (nuget.org에서 발급한 API 키)
+# NuGet 배포는 Trusted Publishing(OIDC)을 사용하므로 API 키 시크릿이 필요 없음
+# (nuget.org의 Trusted Publishing 정책: 저장소 jyunrcaea/Jyuno, 워크플로우 release.yml, 환경 production)
 name: Release
 
 on:
@@ -8,11 +9,14 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: write  # GitHub 릴리즈 생성
+  id-token: write  # NuGet Trusted Publishing용 OIDC 토큰 발급
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Trusted Publishing 정책의 Environment와 같아야 함
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
@@ -36,15 +40,17 @@ jobs:
       - name: 패키지 만들기
         run: dotnet pack Jyuno.csproj -c Release -o artifacts -p:Version=${{ steps.version.outputs.version }} -p:ContinuousIntegrationBuild=true
 
+      # OIDC 토큰으로 1시간짜리 임시 API 키를 받음 (만료되지 않도록 배포 직전에 실행)
+      - name: NuGet 로그인 (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: jyunrcaea  # nuget.org 프로필 이름 (이메일 아님)
+
       - name: NuGet에 배포
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::error::NUGET_API_KEY 시크릿이 설정되지 않았습니다."
-            exit 1
-          fi
-          dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       - name: GitHub 릴리즈 만들기
         env:
