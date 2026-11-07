@@ -1,6 +1,7 @@
 # Jyuno
 
-작고 가벼운 언어 Jyuno 입니다.
+작고 가벼운 언어 Jyuno 입니다.  
+![소개 사이트 & 플레이그라운드](https://jyunrcaea.github.io/JyunoWeb)
 
 ## 목적
 C# 프로그램에 플러그인 기능을 쉽게 추가할수 있도록 하기위해 만들었습니다.<br>
