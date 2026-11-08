@@ -307,6 +307,42 @@ words = div 'hello jyuno world' ' '
 console.writeline (words 1)
 ```
 위 코드는 ``jyuno``를 출력합니다.
+### 컬렉션 함수 (array.\*, list.\*)
+배열/리스트를 다루는 함수입니다. (1.4.1부터)  
+``array.sort``와 ``list.sort``처럼 이름이 같은 함수는 똑같이 동작하며, 배열과 리스트를 모두 받을수 있습니다.  
+길이를 바꾸는 함수(``list.push``, ``list.pop`` 등)는 ``list``에만 있으며, 배열에 쓰면 오류가 발생합니다.
+
+| 함수 | 설명 |
+|---|---|
+| ``array.sort (컬렉션)`` / ``array.sort (컬렉션) true`` | 오름차순으로 정렬합니다. 두번째 인자가 참이라면 내림차순으로 정렬합니다. |
+| ``array.reverse (컬렉션)`` | 순서를 뒤집습니다. |
+| ``array.shuffle (컬렉션)`` | 순서를 무작위로 섞습니다. |
+| ``array.contains (컬렉션) (값)`` | 값과 같은 원소가 있다면 ``true``를 반환합니다. |
+| ``array.indexof (컬렉션) (값)`` | 값과 같은 첫 원소의 인덱스를 반환합니다. 없다면 ``-1``을 반환합니다. |
+| ``array.slice (컬렉션) (시작)`` / ``array.slice (컬렉션) (시작) (끝)`` | 시작 인덱스부터 끝 인덱스 바로 앞까지(끝을 생략하면 마지막까지)의 원소로 새 배열/리스트를 만듭니다. |
+| ``array.join (컬렉션)`` / ``array.join (컬렉션) (구분자)`` | 원소를 문자열로 바꿔서 구분자(생략하면 빈 문자열)로 이어붙인 문자열을 반환합니다. ``null``은 빈 문자열이 됩니다. |
+| ``array.new (길이)`` / ``array.new (길이) (값)`` | 모든 원소가 값(생략하면 ``null``)인 배열을 만듭니다. ``list.new``는 리스트를 만듭니다. |
+| ``list.push (리스트) (값) (값) ...`` | 리스트 끝에 값들을 추가합니다. |
+| ``list.pop (리스트)`` | 마지막 원소를 제거하고, 그 원소를 반환합니다. |
+| ``list.insert (리스트) (인덱스) (값)`` | 인덱스 위치에 값을 끼워넣습니다. (인덱스가 길이와 같다면 끝에 추가) |
+| ``list.removeat (리스트) (인덱스)`` | 인덱스 위치의 원소를 제거하고, 그 원소를 반환합니다. |
+| ``list.remove (리스트) (값)`` | 값과 같은 첫 원소를 제거합니다. 제거했다면 ``true``, 없다면 ``false``를 반환합니다. |
+| ``list.clear (리스트)`` | 모든 원소를 제거합니다. |
+
+``sort``, ``reverse``, ``shuffle``, ``push``, ``insert``, ``clear``는 새 배열/리스트를 만들지 않고 **원래 배열/리스트를 바꾸며**, 바꾼 배열/리스트를 그대로 반환합니다.  
+원래 배열/리스트를 그대로 두고 싶다면 ``array.slice (컬렉션) 0``으로 복사한 뒤에 사용하세요. (``slice``는 항상 새 배열/리스트를 만듭니다.)
+```
+scores = list 70 95 80
+list.push scores 60
+array.sort scores true
+console.writeline (list.join scores ', ')
+```
+위 코드는 ``95, 80, 70, 60``을 출력합니다.
+
+정렬은 ``less``/``greater``와 같은 기준(숫자는 값, 문자열은 유니코드 순서)으로 비교하며, 같은 값끼리는 내림차순이더라도 원래 순서를 유지합니다. (안정 정렬)  
+숫자와 문자열, ``null``처럼 크기를 비교할수 없는 값이 섞여 있다면 오류가 발생합니다. ``math.nan``은 오름차순이라면 가장 앞에, 내림차순이라면 가장 뒤에 둡니다.  
+``contains``, ``indexof``, ``remove``는 ``equal``과 같은 기준으로 비교합니다. (``1``과 ``1.0``은 같음)  
+``list.push``, ``list.insert``로 넣는 값이 리스트의 원소 타입에 맞지 않으면(예: ``list 1 2``로 만든 정수 리스트에 문자열) 오류가 발생합니다. 아무 값이나 넣고 싶다면 ``list``(빈 리스트)로 만드세요.
 ## 비교/논리 연산
 ### less, greater
 ``less a b``는 C 계열 언어의 ``a < b``, ``greater a b``는 ``a > b``와 같습니다.  
@@ -353,6 +389,7 @@ Jyuno를 사용하는 C# 프로그램이 일부 Jyuno 명령어를 비활성화 
 - 배열: ``array (any) (any) ...`` (주어진 인자를 원소로 하는 배열)
 - 리스트: ``list (any) (any) ...`` (주어진 인자를 원소로 하는 리스트)
 - 길이: ``length (string|array|list)`` (문자열의 글자 수, 또는 배열/리스트의 원소 개수)
+- 컬렉션: ``array.sort``, ``array.reverse``, ``array.shuffle``, ``array.contains``, ``array.indexof``, ``array.slice``, ``array.join``, ``array.new`` (``list.``로 시작하는 같은 이름의 함수도 있음), ``list.push``, ``list.pop``, ``list.insert``, ``list.removeat``, ``list.remove``, ``list.clear`` ([컬렉션 함수](#컬렉션-함수-array-list) 참고)
 - 비교: ``equal (any) (any) ...`` (개수에 상관없이 주어진 모든 인자를 비교합니다. 모두 동일하면 true, 하나라도 서로 다를경우 false를 반환합니다.) 
 - 작다: ``less (int|double|string) (int|double|string) ...`` (앞의 값이 뒤의 값보다 작으면 true. 인자가 셋 이상이라면 모든 인자가 오름차순인지 검사합니다.)
 - 크다: ``greater (int|double|string) (int|double|string) ...`` (앞의 값이 뒤의 값보다 크면 true. 인자가 셋 이상이라면 모든 인자가 내림차순인지 검사합니다.)
@@ -379,6 +416,13 @@ Jyuno를 사용하는 C# 프로그램이 일부 Jyuno 명령어를 비활성화 
 - 로그 (상용로그): ``math.log (double)``
 - 로그 (이진로그): ``math.log2 (double)``
 - 파이 (상수): ``math.pi``
+- 난수 (빠름): ``math.random`` (0 이상 1 미만의 실수) 또는 ``math.random (max)`` 또는 ``math.random (min) (max)``
+- 난수 (안전함): ``math.csprng`` (인자 규칙은 ``math.random``과 같음)
+
+``math.random``과 ``math.csprng``는 ``min`` 이상 ``max`` 미만의 값을 무작위로 뽑습니다. (``max``만 넣으면 ``min``은 0)  
+인자가 모두 정수라면 정수를, 실수가 하나라도 있다면 실수를 뽑습니다. 예를 들어 ``math.random 1 7``은 주사위처럼 1~6 중 하나를 뽑고, ``math.random 1.0 7``은 1 이상 7 미만의 실수를 뽑습니다.  
+``min``이 ``max``보다 작지 않다면 오류가 발생합니다.  
+``math.random``은 빠르지만 다음 값을 예측할수 있으므로, 비밀번호나 토큰처럼 보안이 필요한 값은 운영체제의 암호학적으로 안전한 난수 생성기(C#의 ``RandomNumberGenerator``)를 쓰는 ``math.csprng``로 뽑으세요.  
 ### 파일(File)
 파일과 관련된 명령어입니다.
 - 파일 존재 여부: ``file.exist (string)``
