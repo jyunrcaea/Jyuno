@@ -17,7 +17,7 @@ public class VariableDictionary : Dictionary<string, object?>
     }
     public bool AddConstantVariable(string name,Func<object?> get)
     {
-        return AddVariable(name , get , _ => throw new JyunoException("상수에 값을 대입할수 없습니다."));
+        return this.TryAdd(name , new NativeConstantVariable(get));
     }
 }
 
@@ -39,6 +39,12 @@ public class NativeVariable : VariableInterface
 
     public virtual void Set(object? v) => set_func(v);
     public virtual object? Get() => get_func();
+}
+
+//프로그램이 제공하는 상수 (null, true, false, math.pi 등)
+public class NativeConstantVariable : NativeVariable
+{
+    public NativeConstantVariable(Func<object?> get) : base(get , _ => throw new JyunoException("상수에 값을 대입할수 없습니다.")) { }
 }
 
 public class JyunoVariable : VariableInterface

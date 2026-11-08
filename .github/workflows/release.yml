@@ -1,4 +1,5 @@
 # v1.2.3 같은 태그를 푸시하면 테스트 → NuGet 배포 → GitHub 릴리즈 생성
+# 또는 Actions 탭에서 직접 실행(workflow_dispatch)하고 버전을 입력하면, 선택한 브랜치의 커밋에 v(버전) 태그와 릴리즈를 만듦
 # NuGet 배포는 Trusted Publishing(OIDC)을 사용하므로 API 키 시크릿이 필요 없음
 # (nuget.org의 Trusted Publishing 정책: 저장소 jyunrcaea/Jyuno, 워크플로우 release.yml, 환경 production)
 name: Release
@@ -7,6 +8,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '배포할 버전 (예: 1.4.0)'
+        required: true
 
 permissions:
   contents: write  # GitHub 릴리즈 생성
@@ -24,12 +30,18 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: 태그에서 버전 읽기
+      - name: 버전 읽기 (태그 또는 입력)
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::태그 '$GITHUB_REF_NAME'는 v1.2.3 또는 v1.2.3-beta.1 형식이어야 합니다."
+            echo "::error::버전 '$version'은 1.2.3 또는 1.2.3-beta.1 형식이어야 합니다."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -59,5 +71,6 @@ jobs:
         run: |
           prerelease=""
           if [[ "$VERSION" == *-* ]]; then prerelease="--prerelease"; fi
-          gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg artifacts/*.snupkg \
-            --title "Jyuno $VERSION" --generate-notes $prerelease
+          # 태그가 없다면(workflow_dispatch) 지금 커밋에 v(버전) 태그를 만듦
+          gh release create "v$VERSION" artifacts/*.nupkg artifacts/*.snupkg \
+            --target "$GITHUB_SHA" --title "Jyuno $VERSION" --generate-notes $prerelease

@@ -569,7 +569,7 @@ public partial class Interpreter : IDisposable
     }
 
     //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
-    sealed class BlockMap
+    internal sealed class BlockMap
     {
         //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
         public readonly int[] Pair;
@@ -581,19 +581,21 @@ public partial class Interpreter : IDisposable
         public readonly int[] ParamIndex;
         public int Count => Pair.Length;
 
-        public BlockMap(List<CommandLine> scripts)
+        public BlockMap(List<CommandLine> scripts) : this(scripts.Select(o => o.tokens).ToArray()) { }
+
+        public BlockMap(IReadOnlyList<Token[]> lines)
         {
-            Pair = new int[scripts.Count];
-            Errors = new string?[scripts.Count];
-            Owner = new int[scripts.Count];
-            ParamIndex = new int[scripts.Count];
+            Pair = new int[lines.Count];
+            Errors = new string?[lines.Count];
+            Owner = new int[lines.Count];
+            ParamIndex = new int[lines.Count];
             Array.Fill(Pair , -1);
             Stack<int> opened = new();
             List<(int line, int loop)> breaks = new();
             Dictionary<int , int> param_counts = new();
             KeywordType? keyword_at(int line)
             {
-                Token[] tokens = scripts[line].tokens;
+                Token[] tokens = lines[line];
                 return tokens.Length > 0 && tokens[0].type is TokenType.Keyword ? (KeywordType)tokens[0].value : null;
             }
             //닫히지 않은 블록 표시
@@ -610,7 +612,7 @@ public partial class Interpreter : IDisposable
                     Errors[Pair[line]] = Errors[line];
             }
 
-            for (int line = 0 ; line < scripts.Count ; line++)
+            for (int line = 0 ; line < lines.Count ; line++)
             {
                 Owner[line] = opened.FirstOrDefault(o => keyword_at(o) is KeywordType.Func , -1);
                 KeywordType? keyword = keyword_at(line);
