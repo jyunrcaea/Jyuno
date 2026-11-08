@@ -4,7 +4,7 @@ using System.Runtime.ExceptionServices;
 
 namespace Jyuno;
 
-public class Interpreter : IDisposable
+public partial class Interpreter : IDisposable
 {
     public Interpreter(Runtime runtime , IEnumerable<string> script)
     {
@@ -31,6 +31,10 @@ public class Interpreter : IDisposable
         }
         public readonly VariableDictionary Variables = new();
         public readonly Scope? Parent;
+        //이 영역에 이름이 추가/교체/삭제될 때마다 증가 (이름 해석 캐시 검증용)
+        public long Version;
+        //다른 영역에서 이름을 찾을때 이 영역을 거쳐간 적이 있는지 (그렇다면 이 영역이 바뀔때 모든 캐시를 무효화)
+        public bool Shared;
     }
     //지금 실행중인 영역 (처음에는 스크립트 최상위 영역, for 문 안에서는 반복 한번의 영역)
     Scope current;
@@ -38,16 +42,106 @@ public class Interpreter : IDisposable
     readonly Scope top;
     //이 인터프리터에서만 삭제한 전역 함수/변수 (전역 목록은 다른 인터프리터와 공유하므로 직접 지우지 않음)
     HashSet<string> removed_globals = new();
-    bool search_variable(string name,out dynamic? value)
+    //Shared 영역 또는 removed_globals가 바뀔 때마다 증가 (이름 해석 캐시 검증용)
+    long bindings_version = 0;
+
+    //이름 해석 캐시: 컴파일된 줄에서 이름이 나오는 자리마다 하나씩 있으며, 마지막으로 찾은 결과를 기억함
+    //(전역 목록은 추가만 되고 삭제/교체되지 않으므로, 한번 찾은 전역 함수/변수는 이 인터프리터에서 삭제하기 전까지 그대로임)
+    sealed class NameSite
     {
-        for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
+        public NameSite(string name)
         {
-            if (scope.Variables.TryGetValue(name , out value))
-                return true;
+            Name = name;
         }
-        return search_global(name , out value);
+        public readonly string Name;
+        //1단계: 같은 영역에서 다시 찾는 경우 (while 문 등)
+        public Scope? Scope;
+        public long ScopeVersion, Version;
+        public object? Holder;
+        //2단계: 바깥 영역이 같은 새 영역에서 찾는 경우 (for 문의 반복 한번, 같은 함수의 다른 호출 등)
+        public Scope? Parent;
+        public long ParentVersion;
+        public object? ParentHolder;
+        //3단계: 전역 목록에서 찾은 경우 (removed_globals는 늘어나기만 하므로 개수로 검증)
+        public object? Global;
+        public int GlobalRemoved = -1;
     }
-    bool search_global(string name , out dynamic? value)
+    //영역에 이름이 추가/교체/삭제되었음을 알림
+    void scope_changed(Scope scope)
+    {
+        scope.Version++;
+        if (scope.Shared)
+            bindings_version++;
+    }
+    //지금 영역에서 이름을 찾음 (지금 영역 → 바깥 영역 → 전역 순서)
+    bool resolve(NameSite site , out object? holder)
+    {
+        Scope scope = current;
+        if (site.Scope == scope && site.ScopeVersion == scope.Version && site.Version == bindings_version)
+        {
+            holder = site.Holder;
+            return true;
+        }
+        Scope? parent = scope.Parent;
+        if (parent is not null && site.Parent == parent && site.ParentVersion == bindings_version && !scope.Variables.ContainsKey(site.Name))
+        {
+            holder = site.ParentHolder;
+            remember(site , scope , holder);
+            return true;
+        }
+        return resolve_slow(site , out holder);
+    }
+    bool resolve_slow(NameSite site , out object? holder)
+    {
+        Scope scope = current;
+        string name = site.Name;
+        if (scope.Variables.TryGetValue(name , out holder))
+        {
+            remember(site , scope , holder);
+            return true;
+        }
+        bool found = false;
+        for (Scope? outer = scope.Parent ; outer is not null ; outer = outer.Parent)
+        {
+            //이 영역이 바뀌면 이 결과도 바뀔수 있음
+            outer.Shared = true;
+            if (outer.Variables.TryGetValue(name , out holder))
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            if (site.GlobalRemoved == removed_globals.Count)
+            {
+                holder = site.Global;
+            }
+            else
+            {
+                if (!search_global(name , out holder))
+                    return false;
+                site.Global = holder;
+                site.GlobalRemoved = removed_globals.Count;
+            }
+        }
+        remember(site , scope , holder);
+        if (scope.Parent is not null)
+        {
+            site.Parent = scope.Parent;
+            site.ParentVersion = bindings_version;
+            site.ParentHolder = holder;
+        }
+        return true;
+    }
+    void remember(NameSite site , Scope scope , object? holder)
+    {
+        site.Scope = scope;
+        site.ScopeVersion = scope.Version;
+        site.Version = bindings_version;
+        site.Holder = holder;
+    }
+    bool search_global(string name , out object? value)
     {
         if (!removed_globals.Contains(name))
         {
@@ -60,19 +154,24 @@ public class Interpreter : IDisposable
         value = null;
         return false;
     }
-    void substitute_variable(string name,dynamic? value)
+    void substitute_variable(string name , object? value)
     {
         //새로 만드는 변수는 항상 지금 영역에 둠 (전역 목록은 다른 인터프리터와 공유함)
         VariableDictionary dict = current.Variables;
         if (!dict.TryAdd(name , value))
             dict[name] = value;
+        scope_changed(current);
     }
     bool remove_variable(string name)
     {
         //읽을 때와 같은 순서로 찾아서 삭제함 (호출한 다른 함수의 지역 변수는 삭제하지 않음)
         for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (scope.Variables.Remove(name)) return true;
+            if (scope.Variables.Remove(name))
+            {
+                scope_changed(scope);
+                return true;
+            }
         }
         //전역 함수/변수는 이 인터프리터에서만 보이지 않게 함
         if (removed_globals.Contains(name)) return false;
@@ -80,8 +179,11 @@ public class Interpreter : IDisposable
         {
             if (!runtime.Global.ContainsKey(name)) return false;
         }
-        return removed_globals.Add(name);
+        removed_globals.Add(name);
+        bindings_version++;
+        return true;
     }
+    static bool is_true(object?[] values) => values.Length > 0 && Parser.IsTrue(values[0]);
 
     public List<CommandLine> scripts = new();
     public object? ExecuteLine(string cmd)
@@ -150,202 +252,13 @@ public class Interpreter : IDisposable
     }
     object? execute_line(int line , bool flow)
     {
-        Token[] tokens = scripts[line].tokens;
-        if (tokens.Length > 0 && tokens.Last().type is TokenType.Error)
-        {
-            return new GrammarError(line ,(string)tokens.Last().value);
-        }
+        CompiledLine compiled = compiled_line(line);
+        if (compiled.Error is string error)
+            return new GrammarError(line , error);
         //키워드는 인터프리터 차원에서 관리
-        if (tokens.Length is 0)
-            return null;
-        else if (tokens[0].type is TokenType.Keyword)
-            return process_keyword(tokens , line , flow);
-       return execute(tokens , 0,out _);
-    }
-
-    object? execute(Token[] tokens , int start,out int end)
-    {
-        end = tokens.Length; //기본값
-        if (start >= tokens.Length)
-            return null;
-        Token token = tokens[start];
-        switch(token.type)
-        {
-            //상수
-            case TokenType.Constant:
-                //근데 뒤에 대입 연산이 있는가?
-                if (checkvalue(tokens,start+1,TokenType.Prefix,'=') && tokens.Length > start+2)
-                {
-                    //이름도?
-                    Token name = tokens[start+2];
-                    if (name.type == TokenType.Name)
-                    {
-                        //그러면 상수 만들기!
-                        substitute_variable((string)name.value, new JyunoConstantVariable(token.value));
-                        return null;
-                    }
-                }
-                end = start + 1;
-                return token.value;
-            //이름
-            case TokenType.Name:
-                //대입 연산인가?
-                if (checkvalue(tokens,start+1,TokenType.Prefix,'=')) {
-                    //근데 뒤에 인자가 더 없거나, ')' 이라면?
-                    if (start+2 >= tokens.Length || checkvalue(tokens,start+2,TokenType.Prefix,')'))
-                    {
-                        end = start + 2;
-                        //삭제 연산
-                        if (EnableRemoveVariable)
-                            return remove_variable((string)token.value);
-                        else
-                            throw new JyunoException("런타임에서 변수/함수 삭제 연산을 허용하지 않습니다.");
-                    }
-                    //대입 연산이 금지되었는가?
-                    if (BlockSubstitute)
-                        throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
-                    var ret = execute(tokens , start + 2,out end); //별다른 제한이 없음.
-                    //변수가 존재하는가? (함수 안이라면 지역 변수, 함수를 만든 곳의 변수, 프로그램이 제공하는 변수 순서)
-                    //없다면 지금 영역(함수 안이라면 지역 변수)에 새로 만듦
-                    if (search_variable((string)token.value , out dynamic? v))
-                    {
-                        if (v is VariableInterface vi)
-                            vi.Set(ret);
-                        else
-                            throw new JyunoException($"'{token.value}'은/는 변수가 아닙니다.");
-                    }
-                    else
-                    {
-                        substitute_variable((string)token.value , new JyunoVariable(ret));
-                    }
-                    return null;
-                }
-                //레이블 연산인가?
-                if (checkvalue(tokens,start+1,TokenType.Prefix,':'))
-                {
-                    substitute_variable((string)token.value , new JyunoVariable(CurrentExecuteLine));
-                    return null;
-                }
-                //대입 연산이 아니면
-                if (!search_variable((string)token.value ,out dynamic? f))
-                {
-                    throw new JyunoException($"'{token.value}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
-                }
-                //함수 or 변수
-                if (f is FunctionInterface fi)
-                {
-                    //이제 여기서 바뀜.
-                    return fi.Execute(token2value(tokens , start + 1,out end).ToArray());
-                }
-                else if (f is VariableInterface vi)
-                {
-                    end = start + 1;
-                    object? value = vi.Get();
-                    //배열/리스트 뒤에 인자가 있다면 인덱스 읽기 (l 0) 또는 쓰기 (l 0 값)
-                    if (value is System.Collections.IList list && start + 1 < tokens.Length && !checkvalue(tokens , start + 1 , TokenType.Prefix , ')'))
-                    {
-                        var index = token2value(tokens , start + 1 , out end);
-                        switch (index.Count)
-                        {
-                            case 0:
-                                return list;
-                            case 1:
-                                return Collections.Get(list , index.First());
-                            case 2:
-                                //대입 연산이 금지되었는가?
-                                if (BlockSubstitute)
-                                    throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
-                                Collections.Set(list , index.First() , index.Last());
-                                return null;
-                            default:
-                                throw new JyunoException("배열/리스트는 '(이름) (인덱스)' 또는 '(이름) (인덱스) (값)' 형식으로만 쓸수 있습니다.");
-                        }
-                    }
-                    return value;
-                }
-                else
-                    throw new JyunoException($"'{token.value}'는 함수 또는 변수가 아닙니다.");
-            //연산자
-            case TokenType.Prefix:
-                if (token.value is '(')
-                {
-                    var value = execute(tokens , start + 1,out end);
-                    //괄호는 ')'로 닫혀야 하며, 그 다음 위치를 알려줌
-                    if (!checkvalue(tokens , end , TokenType.Prefix , ')'))
-                        throw new JyunoException("괄호 '(' 다음에는 ')'로 끝나야만 합니다.");
-                    end++;
-                    return value;
-                }
-                if (token.value is ')')
-                {
-                    end = start;
-                    return null;
-                }
-                break;
-            //그 외
-            default:
-                throw new JyunoException("처리할수 없습니다.");
-        }
-        return null;
-    }
-    bool checkvalue(in Token[] arr,in int index,in TokenType type,in object? value)
-    {
-        if (index >= arr.Length)
-            return false;
-        Token t = arr[index];
-        return t.type.Equals(type) && t.value.Equals(value);
-    }
-    LinkedList<object?> token2value(Token[] arr,int start,out int end)
-    {
-        LinkedList<object?> ret = new();
-        for (int i = start ; i < arr.Length ; i++)
-        {
-            TokenType type = arr[i].type;
-            //상수
-            if (type == TokenType.Constant)
-            {
-                ret.AddLast(arr[i].value);
-                continue;
-            }
-            //이름
-            if (type == TokenType.Name)
-            {
-                if (search_variable((string)arr[i].value , out dynamic? v))
-                {
-                    if (v is VariableInterface vi)
-                    {
-                        ret.AddLast(vi.Get());
-                        continue;
-                    }
-                } else
-                {
-                    throw new JyunoException($"'{arr[i].value}'은/는 알수없는 변수/함수 입니다.");
-                }
-                throw new JyunoException($"'{arr[i].value}'에서 값을 가져올수 없습니다.");
-            }
-            //키워드
-            if (type is TokenType.Prefix)
-            {
-                if (arr[i].value is '(')
-                {
-                    ret.AddLast(execute(arr,i+1, out int e));
-                    //괄호는 ')'로 닫혀야 함
-                    if (!checkvalue(arr , e , TokenType.Prefix , ')'))
-                        throw new JyunoException("괄호 '(' 다음에는 ')'로 끝나야만 합니다.");
-                    i = e;
-                    continue;
-                }
-                if (arr[i].value is ')')
-                {
-                    end = i;
-                    return ret;
-                }
-                continue;
-            }
-        }
-        //모두 순회했다면
-        end = arr.Length;
-        return ret;
+        if (compiled.Keyword is KeywordType keyword)
+            return process_keyword(compiled , keyword , line , flow);
+        return compiled.Expression();
     }
 
     //if/else/end 등의 짝 (Run 할때 계산)
@@ -382,6 +295,7 @@ public class Interpreter : IDisposable
     {
         current = new Scope(state.Outer);
         current.Variables[state.Name] = new JyunoVariable(state.Items[state.Index]);
+        scope_changed(current);
     }
     //for 문을 빠져나감 (for 문 바깥 영역으로 되돌림)
     void exit_for(int line)
@@ -393,19 +307,19 @@ public class Interpreter : IDisposable
     void jump(int next_line) => CurrentExecuteLine = next_line - 1;
     KeywordType keyword_of(int line) => (KeywordType)scripts[line].tokens[0].value;
 
-    object? process_keyword(in Token[] tokens,in int line,bool flow)
+    object? process_keyword(CompiledLine compiled , KeywordType keyword , int line , bool flow)
     {
-        KeywordType keyword = (KeywordType)tokens[0].value;
+        Token[] tokens = compiled.Tokens;
         //반환
         if (keyword is KeywordType.Return)
         {
-            var ret = token2value(tokens , 1 , out _);
-            return new ReturnInfo(ret.Count is 0 ? null : ret.First());
+            var ret = compiled.Arguments();
+            return new ReturnInfo(ret.Length is 0 ? null : ret[0]);
         }
         //지역 변수 선언 (실행 위치를 옮기지 않으므로 ExecuteLine()에서도 사용 가능)
         if (keyword is KeywordType.Local)
         {
-            declare_local(tokens);
+            declare_local(compiled);
             return null;
         }
         //나머지 키워드는 실행 위치를 옮기므로 Run()으로 실행할 때만 사용 가능
@@ -418,12 +332,12 @@ public class Interpreter : IDisposable
         {
             //이동
             case KeywordType.Goto:
-                var target = token2value(tokens , 1 , out _);
-                if (target.Count is 0)
+                var target = compiled.Arguments();
+                if (target.Length is 0)
                 {
                     throw new JyunoException("이동할 값을 넣지 않았습니다.");
                 }
-                if (!Values.TryGetInteger(target.First() , out long goto_line))
+                if (!Values.TryGetInteger(target[0] , out long goto_line))
                     throw new JyunoException("실행 위치는 음이 아닌 정수여야 합니다.");
                 if (goto_line < 0)
                     throw new JyunoException("실행 위치를 음수로 이동할수 없습니다.");
@@ -440,7 +354,7 @@ public class Interpreter : IDisposable
             //만약
             case KeywordType.If:
                 //실행하지 않을꺼라면 else 또는 end 다음 줄로 건너뛰기
-                if (!Parser.IsTrue(token2value(tokens , 1 , out _)))
+                if (!is_true(compiled.Arguments()))
                     jump(map.Pair[line] + 1);
                 //실행할꺼면 어짜피 else 마주칠때까지 실행하면 됨
                 break;
@@ -450,14 +364,14 @@ public class Interpreter : IDisposable
                 break;
             case KeywordType.While:
                 //실행하지 말아야 한다면 end 다음 줄로 건너뛰기
-                if (!Parser.IsTrue(token2value(tokens , 1 , out _)))
+                if (!is_true(compiled.Arguments()))
                     jump(map.Pair[line] + 1);
                 break;
             case KeywordType.Repeat:
                 //repeat 줄은 반복문에 새로 들어올때만 실행되므로, 항상 횟수를 새로 정함
-                var count = token2value(tokens , 1 , out _);
+                var count = compiled.Arguments();
                 //반복 횟수는 자연수여야만 함, 아니라면 실행하지 않음
-                if (count.Count > 0 && Values.TryGetInteger(count.First() , out long n) && n > 0)
+                if (count.Length > 0 && Values.TryGetInteger(count[0] , out long n) && n > 0)
                 {
                     repeat_counts[line] = n;
                 }
@@ -514,14 +428,14 @@ public class Interpreter : IDisposable
                     throw new JyunoException("for는 'for (이름) (배열/리스트/문자열)' 형식으로만 쓸수 있습니다.");
                 //goto 등으로 순회 중인 for 줄로 다시 왔다면 이전 순회는 끝냄
                 exit_for(line);
-                var source = token2value(tokens , 2 , out _);
-                if (source.Count is not 1)
+                var source = compiled.Arguments();
+                if (source.Length is not 1)
                     throw new JyunoException("for 다음에는 변수 이름과 순회할 값 하나만 와야 합니다.");
-                object?[] items = source.First() switch {
+                object?[] items = source[0] switch {
                     string text => text.Select(c => (object?)c.ToString()).ToArray(),
                     //순회 도중 컬렉션이 바뀌어도 영향을 받지 않도록 복사
                     System.Collections.IList list => list.Cast<object?>().ToArray(),
-                    _ => throw new JyunoException($"'{source.First() ?? "null"}'은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)")
+                    _ => throw new JyunoException($"'{source[0] ?? "null"}'은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)")
                 };
                 if (items.Length is 0)
                 {
@@ -557,8 +471,9 @@ public class Interpreter : IDisposable
     }
 
     //local (이름) 또는 local (이름) = (값): 바깥에 같은 이름의 변수가 있어도 지금 영역에 변수를 새로 만듦
-    void declare_local(Token[] tokens)
+    void declare_local(CompiledLine compiled)
     {
+        Token[] tokens = compiled.Tokens;
         if (tokens.Length < 2 || tokens[1].type is not TokenType.Name)
             throw new JyunoException("local 다음에는 변수 이름이 와야 합니다.");
         //대입 연산이 금지되었는가?
@@ -568,9 +483,9 @@ public class Interpreter : IDisposable
         object? value = null;
         if (tokens.Length > 2)
         {
-            if (!checkvalue(tokens , 2 , TokenType.Prefix , '=') || tokens.Length is 3)
+            if (compiled.LocalValue is not Func<object?> local_value)
                 throw new JyunoException("local은 'local (이름)' 또는 'local (이름) = (값)' 형식으로만 쓸수 있습니다.");
-            value = execute(tokens , 3 , out _);
+            value = local_value();
         }
         //이미 지금 영역에 있는 이름이라면 일반 대입과 같음 (상수/함수는 바꿀수 없음)
         if (current.Variables.TryGetValue(name , out object? existing))
@@ -811,4 +726,6 @@ public class CommandLine
         return tok = Parser.Tokenizer(script).ToArray();
     }
     private Token[]? tok = null;
+    //처음 실행할때 컴파일한 결과
+    internal Interpreter.CompiledLine? compiled = null;
 }

@@ -6,6 +6,11 @@ public class VariableDictionary : Dictionary<string, object?>
     {
         return this.TryAdd(name , new NativeFunction(native_function));
     }
+    //상수 계산(미리 계산)이 가능한 내장 함수 추가 (when: 인자를 보고 미리 계산해도 되는지 판단, 없다면 항상 가능)
+    internal bool AddPureFunction(string name , Func<object?[] , object?> native_function , Func<object?[] , bool>? when = null)
+    {
+        return this.TryAdd(name , new NativeFunction(native_function) { Foldable = when ?? (_ => true) });
+    }
     public bool AddVariable(string name,Func<object?> get,Action<object?> set)
     {
         return this.TryAdd(name , new NativeVariable(get , set));

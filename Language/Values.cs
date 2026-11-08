@@ -82,4 +82,68 @@ internal static class Values
             return real_a == real_b;
         return Equals(a , b);
     }
+
+    //사칙연산: 자주 쓰는 long/double 조합은 바로 계산하고, 그 외(int, decimal 등 프로그램이 넘긴 값)는 이전처럼 dynamic으로 계산
+    //(dynamic과 결과가 같아야 함: long끼리는 오버플로우시 순환, long과 double은 double로 계산)
+    public static object? Add(object? a , object? b)
+    {
+        if (a is long la)
+        {
+            if (b is long lb) return unchecked(la + lb);
+            if (b is double db) return la + db;
+        }
+        else if (a is double da)
+        {
+            if (b is double db) return da + db;
+            if (b is long lb) return da + lb;
+        }
+        dynamic? sum = a;
+        sum += (dynamic?)b;
+        return sum;
+    }
+    public static object? Multiply(object a , object b)
+    {
+        if (a is long la)
+        {
+            if (b is long lb) return unchecked(la * lb);
+            if (b is double db) return la * db;
+        }
+        else if (a is double da)
+        {
+            if (b is double db) return da * db;
+            if (b is long lb) return da * lb;
+        }
+        dynamic mul = a;
+        mul *= (dynamic)b;
+        return mul;
+    }
+    public static object? Divide(object a , object b)
+    {
+        if (a is long la)
+        {
+            //long.MinValue / -1은 dynamic과 같은 예외가 나도록 아래에서 계산
+            if (b is long lb && lb != 0 && !(la == long.MinValue && lb == -1)) return la / lb;
+            if (b is double db) return la / db;
+        }
+        else if (a is double da)
+        {
+            if (b is double db) return da / db;
+            if (b is long lb) return da / lb;
+        }
+        return (dynamic)a / (dynamic)b;
+    }
+    public static object? Modulo(object a , object b)
+    {
+        if (a is long la)
+        {
+            if (b is long lb && lb != 0 && !(la == long.MinValue && lb == -1)) return la % lb;
+            if (b is double db) return la % db;
+        }
+        else if (a is double da)
+        {
+            if (b is double db) return da % db;
+            if (b is long lb) return da % lb;
+        }
+        return (dynamic)a % (dynamic)b;
+    }
 }
