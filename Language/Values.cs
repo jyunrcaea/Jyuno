@@ -83,6 +83,26 @@ internal static class Values
         return Equals(a , b);
     }
 
+    //less/greater 명령어: a가 b보다 작으면 음수, 같으면 0, 크면 양수 (숫자끼리는 값으로, 문자열끼리는 유니코드 순서로 비교)
+    //NaN처럼 순서를 매길수 없다면 null
+    public static int? Compare(object? a , object? b)
+    {
+        if (TryGetInteger(a , out long integer_a) && TryGetInteger(b , out long integer_b))
+            return integer_a.CompareTo(integer_b);
+        if (TryGetReal(a , out double real_a) && TryGetReal(b , out double real_b))
+        {
+            if (double.IsNaN(real_a) || double.IsNaN(real_b))
+                return null;
+            return real_a.CompareTo(real_b);
+        }
+        if (a is string string_a && b is string string_b)
+            return string.CompareOrdinal(string_a , string_b);
+        //그 외에는 같은 타입이면서 비교할수 있는 값만 (C# 프로그램이 넘긴 char, DateTime 등)
+        if (a is IComparable comparable && b is not null && a.GetType() == b.GetType())
+            return comparable.CompareTo(b);
+        throw new JyunoException($"'{a ?? "null"}'와/과 '{b ?? "null"}'은/는 크기를 비교할수 없습니다.");
+    }
+
     //사칙연산: 자주 쓰는 long/double 조합은 바로 계산하고, 그 외(int, decimal 등 프로그램이 넘긴 값)는 이전처럼 dynamic으로 계산
     //(dynamic과 결과가 같아야 함: long끼리는 오버플로우시 순환, long과 double은 double로 계산)
     public static object? Add(object? a , object? b)

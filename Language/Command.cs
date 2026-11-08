@@ -120,6 +120,42 @@ public static class JyunoCommands
             }
             return true;
         });
+        //인자가 셋 이상이라면 모든 인자가 오름차순(less)/내림차순(greater)인지 검사 (less 1 2 3 = 1 < 2 && 2 < 3)
+        dict.AddPureFunction("less" , args => ordered(args , "less" , order => order < 0));
+        dict.AddPureFunction("greater" , args => ordered(args , "greater" , order => order > 0));
+        //인자가 모두 정수라면 비트 연산(C의 a & b & c), 하나라도 정수가 아니라면 논리 연산(C의 a && b && c)
+        dict.AddPureFunction("and" , args => {
+            if (args.Length is 0)
+                throw new JyunoException("and 연산을 할 값이 필요합니다.");
+            if (bitwise(args , out long result , (a , b) => a & b))
+                return result;
+            foreach (object? arg in args)
+            {
+                if (!Parser.IsTrue(arg))
+                    return false;
+            }
+            return true;
+        });
+        dict.AddPureFunction("or" , args => {
+            if (args.Length is 0)
+                throw new JyunoException("or 연산을 할 값이 필요합니다.");
+            if (bitwise(args , out long result , (a , b) => a | b))
+                return result;
+            foreach (object? arg in args)
+            {
+                if (Parser.IsTrue(arg))
+                    return true;
+            }
+            return false;
+        });
+        //정수라면 비트 반전(C의 ~a), 그 외에는 논리 부정(C의 !a), 두번째 인자부터는 무시
+        dict.AddPureFunction("not" , args => {
+            if (args.Length is 0)
+                throw new JyunoException("not 연산을 할 값이 필요합니다.");
+            if (Values.TryGetInteger(args[0] , out long integer))
+                return ~integer;
+            return !Parser.IsTrue(args[0]);
+        });
         dict.AddPureFunction("bool" , args => args.Length > 0 && Parser.IsTrue(args[0]));
     }
     public static void AddConsole(VariableDictionary dict)
@@ -276,6 +312,34 @@ public static class JyunoCommands
     {
         if (args.Length >= 2 && args[0] is string str && Values.TryGetInteger(args[1] , out long count))
             return count <= 0 || str.Length * Math.Min(count , 1 << 20) <= 4096;
+        return true;
+    }
+
+    //less/greater: 이웃한 두 인자끼리 비교한 결과가 모두 조건을 만족하는지 (인자가 하나라면 항상 true)
+    static bool ordered(object?[] args , string name , Func<int , bool> condition)
+    {
+        if (args.Length is 0)
+            throw new JyunoException($"{name} 비교를 할 값이 필요합니다.");
+        //앞에서 이미 false가 나왔더라도 비교할수 없는 값이 있다면 오류가 나도록 끝까지 비교
+        bool result = true;
+        for (int i = 1 ; i < args.Length ; i++)
+        {
+            if (Values.Compare(args[i - 1] , args[i]) is not int order || !condition(order))
+                result = false;
+        }
+        return result;
+    }
+
+    //and/or: 인자가 모두 정수라면 비트 연산한 결과를 계산 (하나라도 정수가 아니라면 false)
+    static bool bitwise(object?[] args , out long result , Func<long , long , long> operation)
+    {
+        result = 0;
+        for (int i = 0 ; i < args.Length ; i++)
+        {
+            if (!Values.TryGetInteger(args[i] , out long integer))
+                return false;
+            result = i is 0 ? integer : operation(result , integer);
+        }
         return true;
     }
 
