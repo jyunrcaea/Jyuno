@@ -273,6 +273,91 @@ public class FunctionTests
     }
 
     [Fact]
+    public void Local_CreatesLocalVariableEvenIfOuterVariableExists()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  local x = 1", "  x = add x 1", "  out x", "endfunc", "f", "return x");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { 2L }, output);
+    }
+
+    [Fact]
+    public void Local_WithoutValue_IsNull()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  local x", "  out x", "endfunc", "f", "return x");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { null }, output);
+    }
+
+    [Fact]
+    public void Local_CanUseFunctionCallAsValue()
+    {
+        var (result, _) = Script.Run("func f", "  local x = add 1 2 (mul 3 4)", "  return x", "endfunc", "return (f)");
+        Assert.Equal(15L, result);
+    }
+
+    [Fact]
+    public void Local_DisappearsAfterReturn()
+    {
+        Assert.Throws<JyunoException>(() => Script.Run("func f", "  local y = 1", "endfunc", "f", "return y"));
+    }
+
+    [Fact]
+    public void Local_IsVisibleToNestedFunction()
+    {
+        var (result, _) = Script.Run(
+            "count = 100",
+            "func outer",
+            "  local count = 0",
+            "  func bump",
+            "    count = add count 1",
+            "  endfunc",
+            "  bump",
+            "  return count",
+            "endfunc",
+            "return (add (outer) count)");
+        Assert.Equal(101L, result);
+    }
+
+    [Fact]
+    public void Local_AtTopLevel_WorksLikeAssignment()
+    {
+        var (result, _) = Script.Run("local x = 3", "return x");
+        Assert.Equal(3L, result);
+    }
+
+    [Fact]
+    public void Local_WorksWithExecuteLine()
+    {
+        Interpreter interpreter = new Runtime().Create();
+        interpreter.ExecuteLine("local x = 7");
+        Assert.Equal(7L, interpreter.ExecuteLine("x"));
+    }
+
+    [Fact]
+    public void Local_OnConstantInSameScope_Throws()
+    {
+        Assert.Throws<JyunoException>(() => Script.Run("func f", "  1 = c", "  local c = 2", "endfunc", "f"));
+    }
+
+    [Theory]
+    [InlineData("local")]
+    [InlineData("local 1")]
+    [InlineData("local x 1")]
+    [InlineData("local x =")]
+    public void Local_WithWrongForm_Throws(string line)
+    {
+        Assert.Throws<JyunoException>(() => Script.Run(line));
+    }
+
+    [Fact]
+    public void Local_IsBlockedWhenSubstituteIsBlocked()
+    {
+        Interpreter interpreter = new Runtime().Create(new[] { "local x = 1" });
+        interpreter.BlockSubstitute = true;
+        Assert.Throws<JyunoException>(() => interpreter.Run());
+    }
+
+    [Fact]
     public void LoopsAndBreak_WorkInsideFunction()
     {
         var (result, _) = Script.Run(

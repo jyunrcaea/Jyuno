@@ -346,6 +346,12 @@ public class Interpreter : IDisposable
             var ret = token2value(tokens , 1 , out _);
             return new ReturnInfo(ret.Count is 0 ? null : ret.First());
         }
+        //지역 변수 선언 (실행 위치를 옮기지 않으므로 ExecuteLine()에서도 사용 가능)
+        if (keyword is KeywordType.Local)
+        {
+            declare_local(tokens);
+            return null;
+        }
         //나머지 키워드는 실행 위치를 옮기므로 Run()으로 실행할 때만 사용 가능
         if (!flow)
             throw new JyunoException($"'{keyword.ToString().ToLowerInvariant()}' 키워드는 Run()으로 실행할 때만 사용할수 있습니다.");
@@ -450,6 +456,34 @@ public class Interpreter : IDisposable
                 break;
         }
         return null;
+    }
+
+    //local (이름) 또는 local (이름) = (값): 바깥에 같은 이름의 변수가 있어도 지금 영역에 변수를 새로 만듦
+    void declare_local(Token[] tokens)
+    {
+        if (tokens.Length < 2 || tokens[1].type is not TokenType.Name)
+            throw new JyunoException("local 다음에는 변수 이름이 와야 합니다.");
+        //대입 연산이 금지되었는가?
+        if (BlockSubstitute)
+            throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
+        string name = (string)tokens[1].value;
+        object? value = null;
+        if (tokens.Length > 2)
+        {
+            if (!checkvalue(tokens , 2 , TokenType.Prefix , '=') || tokens.Length is 3)
+                throw new JyunoException("local은 'local (이름)' 또는 'local (이름) = (값)' 형식으로만 쓸수 있습니다.");
+            value = execute(tokens , 3 , out _);
+        }
+        //이미 지금 영역에 있는 이름이라면 일반 대입과 같음 (상수/함수는 바꿀수 없음)
+        if (current.Variables.TryGetValue(name , out object? existing))
+        {
+            if (existing is VariableInterface vi)
+                vi.Set(value);
+            else
+                throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
+            return;
+        }
+        substitute_variable(name , new JyunoVariable(value));
     }
 
     //함수 호출 정보 (인자, 반복 횟수)
