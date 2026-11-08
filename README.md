@@ -58,6 +58,37 @@ Jyuno의 코드를 직접 실행하는 실행기입니다. 인터프리터 내�
 - ``(add 1 2)``처럼 인자가 모두 상수인 내장 함수 호출(``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``, ``int``, ``double``, ``string``, ``bool``, ``length``, ``math.*``)은 컴파일할 때 미리 계산합니다.  
   스크립트에서 같은 이름을 다시 정의하거나(``func add``, ``local add``) 삭제(``add =``)했다면, 미리 계산한 값 대신 원래대로 호출합니다. 실행할 때 오류가 나는 계산(``div 1 0`` 등)과 배열/리스트를 만드는 계산은 미리 계산하지 않습니다.
 - 이름(변수/함수)을 찾은 결과는 이름이 나오는 자리마다 캐싱되며, 변수가 새로 만들어지거나 삭제/교체되면 자동으로 다시 찾습니다.
+- ``add i 1``처럼 내장 함수(``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``)를 인자 1~3개로 부르는 자리는, 실행할 때 이름이 여전히 같은 내장 함수를 가리키는지만 확인하고 인자 배열 없이 바로 계산합니다. (1.3.4부터)  
+  바로 계산할수 없는 값(``div 1 0``, 문자열과 숫자 더하기 등)이거나 이름을 다시 정의/삭제했다면 원래대로 호출하므로, 결과와 오류는 같습니다. ``if``/``while``의 조건이 하나라면 인자 배열 없이 바로 참/거짓을 판단합니다.
+
+## 코드 분석 (Jyuno.Analysis, 1.4.0부터)
+스크립트를 실행하지 않고 인터프리터와 같은 규칙으로 분석할수 있습니다. 편집기, 검사 도구, 다른 언어로의 변환기(예: [JyunoSdk](https://github.com/jyunrcaea/JyunoSdk)의 Native JS) 등에서 사용합니다.
+
+```cs
+using Jyuno.Analysis;
+
+ScriptAnalysis analysis = ScriptAnalysis.Analyze(File.ReadAllLines("code.jyuno"));
+foreach (var error in analysis.StructureErrors)      // if/end 짝 등 블록 구조 오류
+    Console.WriteLine(error);
+foreach (Statement statement in analysis.Root!.Statements)  // 구문 트리
+    Console.WriteLine($"{statement.Line}: {statement.Kind}");
+```
+
+| API | 내용 |
+|---|---|
+| ``ScriptAnalysis.Analyze(lines)`` | 토큰, 블록 구조, 구문 트리(``Root``), 변수 영역(``TopScope``, ``Scopes``), 함수 목록, goto 대상 |
+| ``Statement`` / ``Expression`` | 문장(``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement`` 등)과 식(``CallExpression``, ``AssignExpression``, ``RemoveExpression`` 등). 줄을 컴파일하는 규칙과 같게 나눕니다. |
+| ``Scope`` | 영역(최상위, 함수 호출 한번, for 반복 한번)마다 만들어질수 있는 이름과 종류(변수/함수/상수) |
+| ``GotoStatement.Targets`` | goto가 같은 블록이나 바깥 블록으로 이동할 때의 실행 위치 |
+| ``ScriptAnalysis.CheckNativeJs(globals)`` | JavaScript로 변환할때(Native JS) 필요한 제약 검사 |
+| ``Runtime.GetGlobals()`` | 런타임의 전역 이름(필수 명령어, 콘솔/수학 명령어, 프로그램이 추가한 함수/변수)과 종류 |
+
+### Native JS 제약
+Native JS(Jyuno 코드를 JavaScript로 변환해서 실행)는 다음을 지켜야 합니다. ``CheckNativeJs``가 실행하기 전에 줄 번호와 함께 알려줍니다.
+1. 변수/함수 삭제(``이름 =``)를 쓸수 없습니다.
+2. 내장 함수와 전역 함수/상수(``add``, ``mul``, ``console.writeline``, ``math.pi``, ``true`` 등)를 다시 정의하거나(``func``, ``local``, ``param``, ``for``, 레이블, 상수) 대입할수 없습니다.
+3. ``goto``로 블록(``if``, ``while``, ``repeat``, ``for``) 안쪽으로 들어갈수 없습니다. (같은 블록이나 바깥 블록의 줄로는 이동할수 있으며, 계산한 대상은 실행할때 검사합니다)
+4. 블록 구조 오류(``end`` 누락 등)는 그 줄에 도달하기 전에, 실행하기 전에 보고합니다.
 
 ## 테스트
 ```
@@ -70,5 +101,6 @@ dotnet test Jyuno.Tests
 git tag v1.0.0
 git push origin v1.0.0
 ```
+태그를 푸시하는 대신 Actions 탭의 ``Release`` 워크플로우를 직접 실행(``Run workflow``)하고 버전을 입력해도 됩니다. (선택한 브랜치의 커밋에 ``v(버전)`` 태그와 릴리즈를 만듭니다)
 NuGet 배포는 API 키 대신 [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing)을 사용합니다.  
 nuget.org의 Trusted Publishing 정책(저장소 ``jyunrcaea/Jyuno``, 워크플로우 ``release.yml``, 환경 ``production``)이 워크플로우와 일치해야 합니다.

@@ -31,6 +31,35 @@ public class Runtime
             return Global.AddVariable(name , get , set);
         }
     }
+    //Jyuno의 필수 명령어 이름 (add, length 등)
+    static readonly HashSet<string> essential_names = create_essential_names();
+    static HashSet<string> create_essential_names()
+    {
+        VariableDictionary dict = new();
+        JyunoCommands.AddDefault(dict);
+        return dict.Keys.ToHashSet();
+    }
+    /// <summary>
+    /// 이 런타임의 전역 이름(필수 명령어, 콘솔/수학 명령어, 프로그램이 추가한 함수/변수)을 돌려줍니다.
+    /// 코드를 실행하지 않고 분석하거나 다른 언어로 변환할때 사용합니다. (예: <see cref="Analysis.ScriptAnalysis.CheckNativeJs"/>)
+    /// </summary>
+    public IReadOnlyDictionary<string , Analysis.GlobalName> GetGlobals()
+    {
+        lock (Global)
+        {
+            Dictionary<string , Analysis.GlobalName> result = new();
+            foreach (var (name , holder) in Global)
+            {
+                bool builtin = essential_names.Contains(name);
+                result[name] = holder switch {
+                    NativeConstantVariable constant => new(name , Analysis.GlobalKind.Constant , builtin , constant.Get()),
+                    VariableInterface => new(name , Analysis.GlobalKind.Variable , builtin , null),
+                    _ => new(name , Analysis.GlobalKind.Function , builtin , null)
+                };
+            }
+            return result;
+        }
+    }
     //Dispose 하지 않은 인터프리터도 GC가 수거할수 있도록 약한 참조로 보관 (스레드 안전)
     readonly ConditionalWeakTable<Interpreter , object> interpreters = new();
     static readonly object alive = new();
@@ -41,16 +70,6 @@ public class Runtime
     public Interpreter Create(string[]? script = null)
     {
         Interpreter interpret = new(this , script ?? Array.Empty<string>());
-        interpreters.Add(interpret , alive);
-        return interpret;
-    }
-    /// <summary>
-    /// 미리 컴파일한 바이너리(.jyc)를 검증하고 인터프리터를 만듭니다. 검증에 실패하면 <see cref="Compiler.JyunoImageException"/>이 발생합니다.
-    /// </summary>
-    public Interpreter Load(ReadOnlySpan<byte> image , Compiler.JyunoImageLoadOptions? options = null) => Create(Compiler.JyunoImage.Load(image , options));
-    public Interpreter Create(Compiler.JyunoImage image)
-    {
-        Interpreter interpret = new(this , image);
         interpreters.Add(interpret , alive);
         return interpret;
     }

@@ -16,15 +16,6 @@ public partial class Interpreter : IDisposable
         //다른 인터프리터와 독립되어야 함.
         current = top = new Scope(null);
     }
-    //미리 컴파일한 바이너리에서 만듦 (토큰화를 건너뜀)
-    internal Interpreter(Runtime runtime , JyunoImage image)
-    {
-        this.runtime = runtime;
-        scripts.Capacity = image.LineCount;
-        for (int line = 0 ; line < image.LineCount ; line++)
-            scripts.Add(new(image , line));
-        current = top = new Scope(null);
-    }
     public bool EnableRemoveVariable { get; set; } = true;
     public bool BlockSubstitute { get; set; } = false;
     public Runtime runtime { get; init; }
@@ -259,18 +250,6 @@ public partial class Interpreter : IDisposable
             CurrentExecuteLine = -1;
         }
     }
-    //(측정용) 모든 줄을 미리 토큰화/컴파일하고 블록 정보를 계산
-    internal void Tokenize()
-    {
-        foreach (CommandLine command in scripts)
-            _ = command.tokens;
-    }
-    internal void Prepare()
-    {
-        for (int line = 0 ; line < scripts.Count ; line++)
-            compiled_line(line);
-        get_blocks();
-    }
     object? execute_line(int line , bool flow)
     {
         CompiledLine compiled = compiled_line(line);
@@ -375,7 +354,7 @@ public partial class Interpreter : IDisposable
             //만약
             case KeywordType.If:
                 //실행하지 않을꺼라면 else 또는 end 다음 줄로 건너뛰기
-                if (!is_true(compiled.Arguments()))
+                if (!compiled.Condition())
                     jump(map.Pair[line] + 1);
                 //실행할꺼면 어짜피 else 마주칠때까지 실행하면 됨
                 break;
@@ -385,7 +364,7 @@ public partial class Interpreter : IDisposable
                 break;
             case KeywordType.While:
                 //실행하지 말아야 한다면 end 다음 줄로 건너뛰기
-                if (!is_true(compiled.Arguments()))
+                if (!compiled.Condition())
                     jump(map.Pair[line] + 1);
                 break;
             case KeywordType.Repeat:
@@ -590,7 +569,7 @@ public partial class Interpreter : IDisposable
     }
 
     //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
-    sealed class BlockMap
+    internal sealed class BlockMap
     {
         //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
         public readonly int[] Pair;
@@ -602,19 +581,21 @@ public partial class Interpreter : IDisposable
         public readonly int[] ParamIndex;
         public int Count => Pair.Length;
 
-        public BlockMap(List<CommandLine> scripts)
+        public BlockMap(List<CommandLine> scripts) : this(scripts.Select(o => o.tokens).ToArray()) { }
+
+        public BlockMap(IReadOnlyList<Token[]> lines)
         {
-            Pair = new int[scripts.Count];
-            Errors = new string?[scripts.Count];
-            Owner = new int[scripts.Count];
-            ParamIndex = new int[scripts.Count];
+            Pair = new int[lines.Count];
+            Errors = new string?[lines.Count];
+            Owner = new int[lines.Count];
+            ParamIndex = new int[lines.Count];
             Array.Fill(Pair , -1);
             Stack<int> opened = new();
             List<(int line, int loop)> breaks = new();
             Dictionary<int , int> param_counts = new();
             KeywordType? keyword_at(int line)
             {
-                Token[] tokens = scripts[line].tokens;
+                Token[] tokens = lines[line];
                 return tokens.Length > 0 && tokens[0].type is TokenType.Keyword ? (KeywordType)tokens[0].value : null;
             }
             //닫히지 않은 블록 표시
@@ -631,7 +612,7 @@ public partial class Interpreter : IDisposable
                     Errors[Pair[line]] = Errors[line];
             }
 
-            for (int line = 0 ; line < scripts.Count ; line++)
+            for (int line = 0 ; line < lines.Count ; line++)
             {
                 Owner[line] = opened.FirstOrDefault(o => keyword_at(o) is KeywordType.Func , -1);
                 KeywordType? keyword = keyword_at(line);
@@ -737,21 +718,7 @@ public class CommandLine
     {
         script = str;
     }
-    //미리 컴파일한 바이너리의 줄 (토큰은 검증을 마친 것)
-    internal CommandLine(JyunoImage image , int line)
-    {
-        this.image = image;
-        this.line = line;
-        tok = image.Lines[line];
-    }
-    readonly JyunoImage? image;
-    readonly int line;
-    string? text;
-    //원본 텍스트는 필요할 때만 꺼냄
-    public string script {
-        get => text ??= image!.GetLine(line);
-        set => text = value;
-    }
+    public string script;
     public Token[] tokens {
         get => tok ?? Parse();
     }
