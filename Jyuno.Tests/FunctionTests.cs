@@ -1,4 +1,4 @@
-using Jyuno.Language;
+﻿using Jyuno.Language;
 
 namespace Jyuno.Tests;
 
@@ -116,11 +116,19 @@ public class FunctionTests
     }
 
     [Fact]
-    public void Assignment_InsideFunction_CreatesLocalVariable()
+    public void Assignment_InsideFunction_ChangesExistingOuterVariable()
     {
         var (result, output) = Script.Run("x = 5", "func f", "  x = 1", "  out x", "endfunc", "f", "return x");
-        Assert.Equal(5L, result);
+        Assert.Equal(1L, result);
         Assert.Equal(new object?[] { 1L }, output);
+    }
+
+    [Fact]
+    public void Assignment_InsideFunction_CreatesLocalVariableWhenNotDefinedOutside()
+    {
+        var (result, output) = Script.Run("func f", "  x = 1", "  out x", "endfunc", "f", "f", "return (x =)");
+        Assert.Equal(false, result);
+        Assert.Equal(new object?[] { 1L, 1L }, output);
     }
 
     [Fact]
@@ -131,11 +139,11 @@ public class FunctionTests
     }
 
     [Fact]
-    public void LocalVariable_CanShadowOuterVariableAfterReadingIt()
+    public void OuterCounter_CanBeUpdatedInsideFunction()
     {
         var (result, output) = Script.Run("n = 1", "func f", "  n = add n 1", "  out n", "endfunc", "f", "f", "return n");
-        Assert.Equal(1L, result);
-        Assert.Equal(new object?[] { 2L, 2L }, output);
+        Assert.Equal(3L, result);
+        Assert.Equal(new object?[] { 2L, 3L }, output);
     }
 
     [Fact]
@@ -174,6 +182,22 @@ public class FunctionTests
     }
 
     [Fact]
+    public void CallerLocalVariables_AreNotChangedByCalledFunction()
+    {
+        var (result, _) = Script.Run(
+            "func inner",
+            "  secret = 2",
+            "endfunc",
+            "func outer",
+            "  secret = 1",
+            "  inner",
+            "  return secret",
+            "endfunc",
+            "return (outer)");
+        Assert.Equal(1L, result);
+    }
+
+    [Fact]
     public void CallerLocalVariables_AreNotVisibleInsideCalledFunction()
     {
         Assert.Throws<JyunoException>(() => Script.Run(
@@ -204,9 +228,35 @@ public class FunctionTests
     }
 
     [Fact]
-    public void Removing_InsideFunction_DoesNotRemoveOuterVariable()
+    public void NestedFunction_CanChangeEnclosingFunctionVariables()
     {
-        var (result, output) = Script.Run("x = 5", "func f", "  out (x =)", "endfunc", "f", "return x");
+        var (result, _) = Script.Run(
+            "func outer",
+            "  count = 0",
+            "  func bump",
+            "    count = add count 1",
+            "  endfunc",
+            "  bump",
+            "  bump",
+            "  return count",
+            "endfunc",
+            "return (outer)");
+        Assert.Equal(2L, result);
+    }
+
+    [Fact]
+    public void Removing_InsideFunction_DoesNotRemoveCallerLocalVariable()
+    {
+        var (result, output) = Script.Run(
+            "func inner",
+            "  out (x =)",
+            "endfunc",
+            "func outer",
+            "  x = 5",
+            "  inner",
+            "  return x",
+            "endfunc",
+            "return (outer)");
         Assert.Equal(5L, result);
         Assert.Equal(new object?[] { false }, output);
     }

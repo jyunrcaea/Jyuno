@@ -58,37 +58,19 @@ public class Interpreter : IDisposable
         value = null;
         return false;
     }
-    //대입할 대상을 찾음: 지금 영역의 변수, 또는 프로그램(런타임)이 제공하는 전역 함수/변수
-    //함수 안에서는 바깥 영역(스크립트 최상위 등)의 변수를 바꾸지 않고, 같은 이름의 지역 변수를 새로 만듦
-    bool search_assign_target(string name , out dynamic? value)
-    {
-        for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
-        {
-            if (scope.Variables.TryGetValue(name , out value))
-            {
-                if (scope == current)
-                    return true;
-                //바깥 영역의 변수는 지역 변수로 가려짐
-                value = null;
-                return false;
-            }
-        }
-        return search_global(name , out value);
-    }
     void substitute_variable(string name,dynamic? value)
     {
-        //대입은 항상 지금 영역에 함 (전역 목록은 다른 인터프리터와 공유함)
+        //새로 만드는 변수는 항상 지금 영역에 둠 (전역 목록은 다른 인터프리터와 공유함)
         VariableDictionary dict = current.Variables;
         if (!dict.TryAdd(name , value))
             dict[name] = value;
     }
     bool remove_variable(string name)
     {
-        //대입할 때와 같은 대상을 삭제함 (함수 안에서는 바깥 영역의 변수를 삭제하지 않음)
-        if (current.Variables.Remove(name)) return true;
-        for (Scope? scope = current.Parent ; scope is not null ; scope = scope.Parent)
+        //읽을 때와 같은 순서로 찾아서 삭제함 (호출한 다른 함수의 지역 변수는 삭제하지 않음)
+        for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (scope.Variables.ContainsKey(name)) return false;
+            if (scope.Variables.Remove(name)) return true;
         }
         //전역 함수/변수는 이 인터프리터에서만 보이지 않게 함
         if (removed_globals.Contains(name)) return false;
@@ -217,8 +199,9 @@ public class Interpreter : IDisposable
                     if (BlockSubstitute)
                         throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
                     var ret = execute(tokens , start + 2,out end); //별다른 제한이 없음.
-                    //대입할 변수가 존재하는가? (함수 안이라면 지역 변수 또는 프로그램이 제공하는 변수)
-                    if (search_assign_target((string)token.value , out dynamic? v))
+                    //변수가 존재하는가? (함수 안이라면 지역 변수, 함수를 만든 곳의 변수, 프로그램이 제공하는 변수 순서)
+                    //없다면 지금 영역(함수 안이라면 지역 변수)에 새로 만듦
+                    if (search_variable((string)token.value , out dynamic? v))
                     {
                         if (v is VariableInterface vi)
                             vi.Set(ret);
