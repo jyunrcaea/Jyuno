@@ -58,7 +58,7 @@ public static class JyunoCommands
                 sum = Values.Add(sum , args[i]);
             }
             return sum;
-        });
+        } , intrinsic: Intrinsic.Add);
         dict.AddPureFunction("sub" , args => {
             if (args.Length < 2)
                 throw new JyunoException("뺄셈 할 값 2개가 필요합니다.");
@@ -73,7 +73,7 @@ public static class JyunoCommands
             if (Values.TryGetReal(args[0] , out double double_a) && Values.TryGetReal(args[1] , out double double_b))
                 return double_a - double_b;
             throw new JyunoException("숫자 또는 문자열 이외에는 뺄셈 연산을 할수 없습니다.");
-        });
+        } , intrinsic: Intrinsic.Sub);
         dict.AddPureFunction("mul" , args => {
             if (args.Length is 0)
                 return 1L;
@@ -90,7 +90,7 @@ public static class JyunoCommands
             for(int i=0 ;i<args.Length;i++)
                 mul = Values.Multiply(mul , args[i] ?? throw null_exception);
             return mul;
-        } , fold_mul);
+        } , fold_mul , intrinsic: Intrinsic.Mul);
         dict.AddPureFunction("div" , args => {
             if (args.Length < 2)
                 throw new JyunoException("나눗셈 할 값 2개가 필요합니다.");
@@ -101,7 +101,7 @@ public static class JyunoCommands
             if (Values.TryGetInteger(divisor , out long zero) && zero is 0)
                 throw new JyunoException("0으로 나눌수 없습니다.");
             return Values.Divide(args[0] ?? throw null_exception , divisor);
-        });
+        } , intrinsic: Intrinsic.Div);
         dict.AddPureFunction("mod" , args => {
             if (args.Length < 2)
                 throw new JyunoException("모듈로 연산 할 값 2개가 필요합니다.");
@@ -109,7 +109,7 @@ public static class JyunoCommands
             if (Values.TryGetInteger(divisor , out long zero) && zero is 0)
                 throw new JyunoException("0으로 나눌수 없습니다.");
             return Values.Modulo(args[0] ?? throw null_exception , divisor);
-        });
+        } , intrinsic: Intrinsic.Mod);
         dict.AddPureFunction("equal" , args => {
             if (args.Length < 2)
                 throw new JyunoException("비교할 대상이 최소 2개 이상 있어야 합니다.");
@@ -119,10 +119,10 @@ public static class JyunoCommands
                     return false;
             }
             return true;
-        });
+        } , intrinsic: Intrinsic.Equal);
         //인자가 셋 이상이라면 모든 인자가 오름차순(less)/내림차순(greater)인지 검사 (less 1 2 3 = 1 < 2 && 2 < 3)
-        dict.AddPureFunction("less" , args => ordered(args , "less" , order => order < 0));
-        dict.AddPureFunction("greater" , args => ordered(args , "greater" , order => order > 0));
+        dict.AddPureFunction("less" , args => ordered(args , "less" , order => order < 0) , intrinsic: Intrinsic.Less);
+        dict.AddPureFunction("greater" , args => ordered(args , "greater" , order => order > 0) , intrinsic: Intrinsic.Greater);
         //인자가 모두 정수라면 비트 연산(C의 a & b & c), 하나라도 정수가 아니라면 논리 연산(C의 a && b && c)
         dict.AddPureFunction("and" , args => {
             if (args.Length is 0)
@@ -135,7 +135,7 @@ public static class JyunoCommands
                     return false;
             }
             return true;
-        });
+        } , intrinsic: Intrinsic.And);
         dict.AddPureFunction("or" , args => {
             if (args.Length is 0)
                 throw new JyunoException("or 연산을 할 값이 필요합니다.");
@@ -147,7 +147,7 @@ public static class JyunoCommands
                     return true;
             }
             return false;
-        });
+        } , intrinsic: Intrinsic.Or);
         //정수라면 비트 반전(C의 ~a), 그 외에는 논리 부정(C의 !a), 두번째 인자부터는 무시
         dict.AddPureFunction("not" , args => {
             if (args.Length is 0)
@@ -155,7 +155,7 @@ public static class JyunoCommands
             if (Values.TryGetInteger(args[0] , out long integer))
                 return ~integer;
             return !Parser.IsTrue(args[0]);
-        });
+        } , intrinsic: Intrinsic.Not);
         dict.AddPureFunction("bool" , args => args.Length > 0 && Parser.IsTrue(args[0]));
     }
     public static void AddConsole(VariableDictionary dict)

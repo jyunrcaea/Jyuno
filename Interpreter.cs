@@ -354,7 +354,7 @@ public partial class Interpreter : IDisposable
             //만약
             case KeywordType.If:
                 //실행하지 않을꺼라면 else 또는 end 다음 줄로 건너뛰기
-                if (!is_true(compiled.Arguments()))
+                if (!compiled.Condition())
                     jump(map.Pair[line] + 1);
                 //실행할꺼면 어짜피 else 마주칠때까지 실행하면 됨
                 break;
@@ -364,7 +364,7 @@ public partial class Interpreter : IDisposable
                 break;
             case KeywordType.While:
                 //실행하지 말아야 한다면 end 다음 줄로 건너뛰기
-                if (!is_true(compiled.Arguments()))
+                if (!compiled.Condition())
                     jump(map.Pair[line] + 1);
                 break;
             case KeywordType.Repeat:

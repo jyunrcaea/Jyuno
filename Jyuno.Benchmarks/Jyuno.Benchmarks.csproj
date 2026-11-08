@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 다른 .NET 버전에서 재려면 -p:BenchFramework=net10.0 처럼 지정 -->
+    <BenchFramework Condition="'$(BenchFramework)' == ''">net8.0</BenchFramework>
+    <TargetFramework>$(BenchFramework)</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jyuno.csproj" />
+  </ItemGroup>
+
+</Project>
