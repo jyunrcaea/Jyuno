@@ -13,22 +13,40 @@ public class Interpreter : IDisposable
         {
             scripts.Add(new(text));
         }
-        Locals.Push(new()); //다른 인터프리터와 독립되어야 함.
+        //다른 인터프리터와 독립되어야 함.
+        current = new Scope(null);
     }
     public bool EnableRemoveVariable { get; set; } = true;
     public bool BlockSubstitute { get; set; } = false;
     public Runtime runtime { get; init; }
     public int CurrentExecuteLine { get; private set; } = -1;
-    Stack<VariableDictionary> Locals = new();
+
+    //변수 영역: 스크립트 최상위 영역, 또는 함수 호출 한번의 지역 영역
+    //함수 영역의 Parent는 호출한 쪽이 아니라 함수를 만든 영역이므로, 다른 함수의 지역 변수는 보이지 않음
+    sealed class Scope
+    {
+        public Scope(Scope? parent)
+        {
+            Parent = parent;
+        }
+        public readonly VariableDictionary Variables = new();
+        public readonly Scope? Parent;
+    }
+    //지금 실행중인 영역 (처음에는 스크립트 최상위 영역)
+    Scope current;
     //이 인터프리터에서만 삭제한 전역 함수/변수 (전역 목록은 다른 인터프리터와 공유하므로 직접 지우지 않음)
     HashSet<string> removed_globals = new();
     bool search_variable(string name,out dynamic? value)
     {
-        foreach(var local in Locals)
+        for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (local.TryGetValue(name , out value))
+            if (scope.Variables.TryGetValue(name , out value))
                 return true;
         }
+        return search_global(name , out value);
+    }
+    bool search_global(string name , out dynamic? value)
+    {
         if (!removed_globals.Contains(name))
         {
             //전역 목록은 다른 스레드에서 함수/변수가 추가될수 있으므로 잠금
@@ -42,16 +60,17 @@ public class Interpreter : IDisposable
     }
     void substitute_variable(string name,dynamic? value)
     {
-        //대입은 항상 지역 변수에 함 (전역 목록은 다른 인터프리터와 공유함)
-        VariableDictionary dict = Locals.Peek();
+        //새로 만드는 변수는 항상 지금 영역에 둠 (전역 목록은 다른 인터프리터와 공유함)
+        VariableDictionary dict = current.Variables;
         if (!dict.TryAdd(name , value))
             dict[name] = value;
     }
     bool remove_variable(string name)
     {
-        foreach(var stack in Locals)
+        //읽을 때와 같은 순서로 찾아서 삭제함 (호출한 다른 함수의 지역 변수는 삭제하지 않음)
+        for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (stack.Remove(name)) return true;
+            if (scope.Variables.Remove(name)) return true;
         }
         //전역 함수/변수는 이 인터프리터에서만 보이지 않게 함
         if (removed_globals.Contains(name)) return false;
@@ -180,7 +199,8 @@ public class Interpreter : IDisposable
                     if (BlockSubstitute)
                         throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
                     var ret = execute(tokens , start + 2,out end); //별다른 제한이 없음.
-                    //변수가 존재하는가?
+                    //변수가 존재하는가? (함수 안이라면 지역 변수, 함수를 만든 곳의 변수, 프로그램이 제공하는 변수 순서)
+                    //없다면 지금 영역(함수 안이라면 지역 변수)에 새로 만듦
                     if (search_variable((string)token.value , out dynamic? v))
                     {
                         if (v is VariableInterface vi)
@@ -326,6 +346,12 @@ public class Interpreter : IDisposable
             var ret = token2value(tokens , 1 , out _);
             return new ReturnInfo(ret.Count is 0 ? null : ret.First());
         }
+        //지역 변수 선언 (실행 위치를 옮기지 않으므로 ExecuteLine()에서도 사용 가능)
+        if (keyword is KeywordType.Local)
+        {
+            declare_local(tokens);
+            return null;
+        }
         //나머지 키워드는 실행 위치를 옮기므로 Run()으로 실행할 때만 사용 가능
         if (!flow)
             throw new JyunoException($"'{keyword.ToString().ToLowerInvariant()}' 키워드는 Run()으로 실행할 때만 사용할수 있습니다.");
@@ -412,7 +438,7 @@ public class Interpreter : IDisposable
             case KeywordType.Func:
                 if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
                     throw new JyunoException("func 다음에는 함수 이름 하나만 와야 합니다.");
-                substitute_variable((string)tokens[1].value , new JyunoFunction(this , line , map.Pair[line]));
+                substitute_variable((string)tokens[1].value , new JyunoFunction(this , line , map.Pair[line] , current));
                 jump(map.Pair[line] + 1);
                 break;
             //파라미터: 몇번째 param인지에 따라 인자를 받음 (인자가 부족하면 null)
@@ -432,6 +458,34 @@ public class Interpreter : IDisposable
         return null;
     }
 
+    //local (이름) 또는 local (이름) = (값): 바깥에 같은 이름의 변수가 있어도 지금 영역에 변수를 새로 만듦
+    void declare_local(Token[] tokens)
+    {
+        if (tokens.Length < 2 || tokens[1].type is not TokenType.Name)
+            throw new JyunoException("local 다음에는 변수 이름이 와야 합니다.");
+        //대입 연산이 금지되었는가?
+        if (BlockSubstitute)
+            throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
+        string name = (string)tokens[1].value;
+        object? value = null;
+        if (tokens.Length > 2)
+        {
+            if (!checkvalue(tokens , 2 , TokenType.Prefix , '=') || tokens.Length is 3)
+                throw new JyunoException("local은 'local (이름)' 또는 'local (이름) = (값)' 형식으로만 쓸수 있습니다.");
+            value = execute(tokens , 3 , out _);
+        }
+        //이미 지금 영역에 있는 이름이라면 일반 대입과 같음 (상수/함수는 바꿀수 없음)
+        if (current.Variables.TryGetValue(name , out object? existing))
+        {
+            if (existing is VariableInterface vi)
+                vi.Set(value);
+            else
+                throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
+            return;
+        }
+        substitute_variable(name , new JyunoVariable(value));
+    }
+
     //함수 호출 정보 (인자, 반복 횟수)
     sealed class CallFrame
     {
@@ -449,24 +503,28 @@ public class Interpreter : IDisposable
     //스크립트에서 func로 만든 함수
     sealed class JyunoFunction : FunctionInterface
     {
-        public JyunoFunction(Interpreter interpreter , int line , int end)
+        public JyunoFunction(Interpreter interpreter , int line , int end , Scope scope)
         {
             this.interpreter = interpreter;
             this.line = line;
             this.end = end;
+            this.scope = scope;
         }
         readonly Interpreter interpreter;
         readonly int line, end;
-        public object? Execute(params object?[] args) => interpreter.call_function(line , end , args);
+        //함수를 만든 영역 (함수 본문에서 읽을수 있는 바깥 변수)
+        readonly Scope scope;
+        public object? Execute(params object?[] args) => interpreter.call_function(line , end , scope , args);
     }
-    object? call_function(int line , int end , object?[] args)
+    object? call_function(int line , int end , Scope scope , object?[] args)
     {
         if (frames.Count >= MaxCallDepth)
             throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
-        int current = CurrentExecuteLine;
+        int current_line = CurrentExecuteLine;
+        Scope caller = current;
         frames.Push(new CallFrame(args));
         //함수 안에서 만든 변수는 함수가 끝나면 사라짐
-        Locals.Push(new());
+        current = new Scope(scope);
         try
         {
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
@@ -481,9 +539,9 @@ public class Interpreter : IDisposable
         }
         finally
         {
-            Locals.Pop();
+            current = caller;
             frames.Pop();
-            CurrentExecuteLine = current;
+            CurrentExecuteLine = current_line;
         }
     }
     //함수 안에서 발생한 문법 오류를 Run()/ExecuteLine()까지 전달

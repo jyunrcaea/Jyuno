@@ -1,4 +1,4 @@
-using Jyuno.Language;
+﻿using Jyuno.Language;
 
 namespace Jyuno.Tests;
 
@@ -113,6 +113,248 @@ public class FunctionTests
     {
         var (result, _) = Script.Run("a = 5", "func f", "  param a", "endfunc", "f 1", "return a");
         Assert.Equal(5L, result);
+    }
+
+    [Fact]
+    public void Assignment_InsideFunction_ChangesExistingOuterVariable()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  x = 1", "  out x", "endfunc", "f", "return x");
+        Assert.Equal(1L, result);
+        Assert.Equal(new object?[] { 1L }, output);
+    }
+
+    [Fact]
+    public void Assignment_InsideFunction_CreatesLocalVariableWhenNotDefinedOutside()
+    {
+        var (result, output) = Script.Run("func f", "  x = 1", "  out x", "endfunc", "f", "f", "return (x =)");
+        Assert.Equal(false, result);
+        Assert.Equal(new object?[] { 1L, 1L }, output);
+    }
+
+    [Fact]
+    public void OuterVariables_CanBeReadInsideFunction()
+    {
+        var (result, _) = Script.Run("base = 10", "func f", "  param a", "  return (add base a)", "endfunc", "return (f 5)");
+        Assert.Equal(15L, result);
+    }
+
+    [Fact]
+    public void OuterCounter_CanBeUpdatedInsideFunction()
+    {
+        var (result, output) = Script.Run("n = 1", "func f", "  n = add n 1", "  out n", "endfunc", "f", "f", "return n");
+        Assert.Equal(3L, result);
+        Assert.Equal(new object?[] { 2L, 3L }, output);
+    }
+
+    [Fact]
+    public void RecursiveCalls_KeepTheirOwnLocalVariables()
+    {
+        var (_, output) = Script.Run(
+            "func r",
+            "  param d",
+            "  x = d",
+            "  if d",
+            "    r (sub d 1)",
+            "  end",
+            "  out x",
+            "endfunc",
+            "r 2");
+        Assert.Equal(new object?[] { 0L, 1L, 2L }, output);
+    }
+
+    [Fact]
+    public void LoopVariable_IsNotOverwrittenByCalledFunction()
+    {
+        var (_, output) = Script.Run(
+            "func inner",
+            "  i = 100",
+            "endfunc",
+            "func outer",
+            "  i = 0",
+            "  repeat 3",
+            "    i = add i 1",
+            "    inner",
+            "    out i",
+            "  end",
+            "endfunc",
+            "outer");
+        Assert.Equal(new object?[] { 1L, 2L, 3L }, output);
+    }
+
+    [Fact]
+    public void CallerLocalVariables_AreNotChangedByCalledFunction()
+    {
+        var (result, _) = Script.Run(
+            "func inner",
+            "  secret = 2",
+            "endfunc",
+            "func outer",
+            "  secret = 1",
+            "  inner",
+            "  return secret",
+            "endfunc",
+            "return (outer)");
+        Assert.Equal(1L, result);
+    }
+
+    [Fact]
+    public void CallerLocalVariables_AreNotVisibleInsideCalledFunction()
+    {
+        Assert.Throws<JyunoException>(() => Script.Run(
+            "func inner",
+            "  return secret",
+            "endfunc",
+            "func outer",
+            "  secret = 1",
+            "  return (inner)",
+            "endfunc",
+            "outer"));
+    }
+
+    [Fact]
+    public void NestedFunction_CanReadEnclosingFunctionVariables()
+    {
+        var (result, _) = Script.Run(
+            "func outer",
+            "  param a",
+            "  func inner",
+            "    param b",
+            "    return (add a b)",
+            "  endfunc",
+            "  return (inner 2)",
+            "endfunc",
+            "return (outer 40)");
+        Assert.Equal(42L, result);
+    }
+
+    [Fact]
+    public void NestedFunction_CanChangeEnclosingFunctionVariables()
+    {
+        var (result, _) = Script.Run(
+            "func outer",
+            "  count = 0",
+            "  func bump",
+            "    count = add count 1",
+            "  endfunc",
+            "  bump",
+            "  bump",
+            "  return count",
+            "endfunc",
+            "return (outer)");
+        Assert.Equal(2L, result);
+    }
+
+    [Fact]
+    public void Removing_InsideFunction_DoesNotRemoveCallerLocalVariable()
+    {
+        var (result, output) = Script.Run(
+            "func inner",
+            "  out (x =)",
+            "endfunc",
+            "func outer",
+            "  x = 5",
+            "  inner",
+            "  return x",
+            "endfunc",
+            "return (outer)");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { false }, output);
+    }
+
+    [Fact]
+    public void RuntimeVariable_CanBeSetInsideFunction()
+    {
+        Runtime runtime = new();
+        object? stored = null;
+        runtime.AddVariable("host.value", () => stored, v => stored = v);
+        Interpreter interpreter = runtime.Create(new[] { "func f", "  host.value = 7", "endfunc", "f" });
+        interpreter.Run();
+        Assert.Equal(7L, stored);
+    }
+
+    [Fact]
+    public void Local_CreatesLocalVariableEvenIfOuterVariableExists()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  local x = 1", "  x = add x 1", "  out x", "endfunc", "f", "return x");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { 2L }, output);
+    }
+
+    [Fact]
+    public void Local_WithoutValue_IsNull()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  local x", "  out x", "endfunc", "f", "return x");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { null }, output);
+    }
+
+    [Fact]
+    public void Local_CanUseFunctionCallAsValue()
+    {
+        var (result, _) = Script.Run("func f", "  local x = add 1 2 (mul 3 4)", "  return x", "endfunc", "return (f)");
+        Assert.Equal(15L, result);
+    }
+
+    [Fact]
+    public void Local_DisappearsAfterReturn()
+    {
+        Assert.Throws<JyunoException>(() => Script.Run("func f", "  local y = 1", "endfunc", "f", "return y"));
+    }
+
+    [Fact]
+    public void Local_IsVisibleToNestedFunction()
+    {
+        var (result, _) = Script.Run(
+            "count = 100",
+            "func outer",
+            "  local count = 0",
+            "  func bump",
+            "    count = add count 1",
+            "  endfunc",
+            "  bump",
+            "  return count",
+            "endfunc",
+            "return (add (outer) count)");
+        Assert.Equal(101L, result);
+    }
+
+    [Fact]
+    public void Local_AtTopLevel_WorksLikeAssignment()
+    {
+        var (result, _) = Script.Run("local x = 3", "return x");
+        Assert.Equal(3L, result);
+    }
+
+    [Fact]
+    public void Local_WorksWithExecuteLine()
+    {
+        Interpreter interpreter = new Runtime().Create();
+        interpreter.ExecuteLine("local x = 7");
+        Assert.Equal(7L, interpreter.ExecuteLine("x"));
+    }
+
+    [Fact]
+    public void Local_OnConstantInSameScope_Throws()
+    {
+        Assert.Throws<JyunoException>(() => Script.Run("func f", "  1 = c", "  local c = 2", "endfunc", "f"));
+    }
+
+    [Theory]
+    [InlineData("local")]
+    [InlineData("local 1")]
+    [InlineData("local x 1")]
+    [InlineData("local x =")]
+    public void Local_WithWrongForm_Throws(string line)
+    {
+        Assert.Throws<JyunoException>(() => Script.Run(line));
+    }
+
+    [Fact]
+    public void Local_IsBlockedWhenSubstituteIsBlocked()
+    {
+        Interpreter interpreter = new Runtime().Create(new[] { "local x = 1" });
+        interpreter.BlockSubstitute = true;
+        Assert.Throws<JyunoException>(() => interpreter.Run());
     }
 
     [Fact]
