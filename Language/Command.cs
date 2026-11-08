@@ -27,6 +27,16 @@ public static class JyunoCommands
         dict.AddFunction("string" , args => args.Length is 0 ? string.Empty : Convert.ToString((args[0] ?? throw null_exception) , CultureInfo.InvariantCulture));
         dict.AddFunction("array" , args => Collections.NewArray(args));
         dict.AddFunction("list" , args => Collections.NewList(args));
+        dict.AddFunction("length" , args => {
+            if (args.Length is 0)
+                throw new JyunoException("길이를 구할 값이 필요합니다.");
+            return args[0] switch {
+                string text => (long)text.Length,
+                System.Collections.ICollection collection => (long)collection.Count,
+                null => throw null_exception,
+                _ => throw new JyunoException($"'{args[0]}'은/는 문자열 또는 배열/리스트가 아니므로 길이를 구할수 없습니다.")
+            };
+        });
         dict.AddFunction("add" , args => {
             if (args.Length is 0)
                 throw new JyunoException("덧셈을 할 값들을 넣지 않았습니다.");

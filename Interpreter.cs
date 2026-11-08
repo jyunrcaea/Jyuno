@@ -14,7 +14,7 @@ public class Interpreter : IDisposable
             scripts.Add(new(text));
         }
         //다른 인터프리터와 독립되어야 함.
-        current = new Scope(null);
+        current = top = new Scope(null);
     }
     public bool EnableRemoveVariable { get; set; } = true;
     public bool BlockSubstitute { get; set; } = false;
@@ -32,8 +32,10 @@ public class Interpreter : IDisposable
         public readonly VariableDictionary Variables = new();
         public readonly Scope? Parent;
     }
-    //지금 실행중인 영역 (처음에는 스크립트 최상위 영역)
+    //지금 실행중인 영역 (처음에는 스크립트 최상위 영역, for 문 안에서는 반복 한번의 영역)
     Scope current;
+    //스크립트 최상위 영역
+    readonly Scope top;
     //이 인터프리터에서만 삭제한 전역 함수/변수 (전역 목록은 다른 인터프리터와 공유하므로 직접 지우지 않음)
     HashSet<string> removed_globals = new();
     bool search_variable(string name,out dynamic? value)
@@ -117,6 +119,8 @@ public class Interpreter : IDisposable
         //스크립트가 바뀌었을수 있으므로 블록 정보를 새로 계산
         blocks = null;
         top_repeat_counts.Clear();
+        top_for_states.Clear();
+        current = top;
         try
         {
             for(CurrentExecuteLine = start ;CurrentExecuteLine<scripts.Count ; CurrentExecuteLine++)
@@ -137,8 +141,10 @@ public class Interpreter : IDisposable
         }
         finally
         {
-            //반환되거나 예외가 발생해도 다시 실행할수 있도록
+            //반환되거나 예외가 발생해도 다시 실행할수 있도록 (for 문 안에서 끝났다면 최상위 영역으로 되돌림)
             running = false;
+            current = top;
+            top_for_states.Clear();
             CurrentExecuteLine = -1;
         }
     }
@@ -354,6 +360,35 @@ public class Interpreter : IDisposable
     //repeat 줄 → 남은 반복 횟수 (함수 호출마다 따로 관리해야 재귀 호출에서도 섞이지 않음)
     Dictionary<int , long> top_repeat_counts = new();
     Dictionary<int , long> repeat_counts => frames.Count > 0 ? frames.Peek().RepeatCounts : top_repeat_counts;
+    //for 줄 → 순회 상태 (repeat과 마찬가지로 함수 호출마다 따로 관리)
+    Dictionary<int , ForState> top_for_states = new();
+    Dictionary<int , ForState> for_states => frames.Count > 0 ? frames.Peek().ForStates : top_for_states;
+    //for 문의 순회 상태: 순회할 원소, 지금 위치, for 문 바깥 영역
+    sealed class ForState
+    {
+        public ForState(string name , object?[] items , Scope outer)
+        {
+            Name = name;
+            Items = items;
+            Outer = outer;
+        }
+        public readonly string Name;
+        public readonly object?[] Items;
+        public readonly Scope Outer;
+        public int Index;
+    }
+    //반복 한번을 위한 새 영역을 만들고 원소를 변수에 넣음
+    void enter_for(ForState state)
+    {
+        current = new Scope(state.Outer);
+        current.Variables[state.Name] = new JyunoVariable(state.Items[state.Index]);
+    }
+    //for 문을 빠져나감 (for 문 바깥 영역으로 되돌림)
+    void exit_for(int line)
+    {
+        if (for_states.Remove(line , out ForState? state))
+            current = state.Outer;
+    }
     //다음에 실행할 줄을 정함 (Run의 반복문에서 1을 더하므로 1을 뺌)
     void jump(int next_line) => CurrentExecuteLine = next_line - 1;
     KeywordType keyword_of(int line) => (KeywordType)scripts[line].tokens[0].value;
@@ -397,6 +432,9 @@ public class Interpreter : IDisposable
                 //함수 안팎으로는 이동할수 없음
                 if ((goto_line < scripts.Count ? map.Owner[goto_line] : -1) != map.Owner[line])
                     throw new JyunoException("goto로 함수 안팎을 넘나들수 없습니다.");
+                //goto로 빠져나가는 for 문은 안쪽부터 정리 (마지막에 가장 바깥 for 문의 바깥 영역으로 되돌아감)
+                foreach (int for_line in for_states.Keys.Where(o => !(o < goto_line && goto_line <= map.Pair[o])).OrderByDescending(o => o).ToList())
+                    exit_for(for_line);
                 jump((int)goto_line);
                 break;
             //만약
@@ -447,13 +485,52 @@ public class Interpreter : IDisposable
                         else
                             repeat_counts.Remove(opener);
                         break;
+                    //for는 남은 원소가 있다면 새 영역에서 for 다음 줄부터 다시 실행
+                    case KeywordType.For:
+                        if (for_states.TryGetValue(opener , out ForState? state))
+                        {
+                            current = state.Outer;
+                            if (++state.Index < state.Items.Length)
+                            {
+                                enter_for(state);
+                                jump(opener + 1);
+                            }
+                            else
+                                for_states.Remove(opener);
+                        }
+                        break;
                 }
                 break;
             case KeywordType.Break:
                 //가장 안쪽 반복문의 end 다음 줄로 건너뛰기
                 int loop_end = map.Pair[line];
                 repeat_counts.Remove(map.Pair[loop_end]);
+                exit_for(map.Pair[loop_end]);
                 jump(loop_end + 1);
+                break;
+            //for (이름) (컬렉션): 컬렉션의 원소를 차례대로 (이름)에 넣고 for와 end 사이를 실행
+            case KeywordType.For:
+                if (tokens.Length < 3 || tokens[1].type is not TokenType.Name)
+                    throw new JyunoException("for는 'for (이름) (배열/리스트/문자열)' 형식으로만 쓸수 있습니다.");
+                //goto 등으로 순회 중인 for 줄로 다시 왔다면 이전 순회는 끝냄
+                exit_for(line);
+                var source = token2value(tokens , 2 , out _);
+                if (source.Count is not 1)
+                    throw new JyunoException("for 다음에는 변수 이름과 순회할 값 하나만 와야 합니다.");
+                object?[] items = source.First() switch {
+                    string text => text.Select(c => (object?)c.ToString()).ToArray(),
+                    //순회 도중 컬렉션이 바뀌어도 영향을 받지 않도록 복사
+                    System.Collections.IList list => list.Cast<object?>().ToArray(),
+                    _ => throw new JyunoException($"'{source.First() ?? "null"}'은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)")
+                };
+                if (items.Length is 0)
+                {
+                    jump(map.Pair[line] + 1);
+                    break;
+                }
+                ForState for_state = new((string)tokens[1].value , items , current);
+                for_states[line] = for_state;
+                enter_for(for_state);
                 break;
             //함수 정의: 이름에 함수를 저장하고 endfunc 다음 줄로 건너뛰기
             case KeywordType.Func:
@@ -516,6 +593,7 @@ public class Interpreter : IDisposable
         }
         public readonly object?[] Args;
         public readonly Dictionary<int , long> RepeatCounts = new();
+        public readonly Dictionary<int , ForState> ForStates = new();
     }
     Stack<CallFrame> frames = new();
     //무한 재귀로 프로그램이 죽지 않도록 제한
@@ -575,10 +653,10 @@ public class Interpreter : IDisposable
         public readonly GrammarError Error;
     }
 
-    //스크립트를 한번 훑어서 if/while/repeat/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
+    //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
     sealed class BlockMap
     {
-        //if → else(없다면 end), else → end, while/repeat → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
+        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
         public readonly int[] Pair;
         //블록 구조가 잘못된 줄의 오류 메시지
         public readonly string?[] Errors;
@@ -641,7 +719,7 @@ public class Interpreter : IDisposable
                         //func는 end가 아닌 endfunc로 닫아야 함
                         if (!opened.TryPeek(out int opener) || keyword_at(opener) is KeywordType.Func)
                         {
-                            Errors[line] = "end와 짝이 되는 if, while, repeat 키워드가 없습니다.";
+                            Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다.";
                             break;
                         }
                         opened.Pop();
@@ -681,7 +759,7 @@ public class Interpreter : IDisposable
                             }
                         }
                         if (loop < 0)
-                            Errors[line] = "break는 반복문(while, repeat) 안에서만 쓸수 있습니다.";
+                            Errors[line] = "break는 반복문(while, repeat, for) 안에서만 쓸수 있습니다.";
                         else
                             breaks.Add((line , loop));
                         break;
