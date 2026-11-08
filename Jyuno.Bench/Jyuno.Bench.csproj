@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- [프로토타입] 제한 모드 프로그램(.jyc v2) 차등 테스트와 측정 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishAot Condition="'$(JyunoAot)' == 'true'">true</PublishAot>
+    <!-- JyunoWeb의 콘솔 호스트와 채점 문제를 그대로 사용 (JyunoWeb이 같은 상위 폴더에 있어야 함) -->
+    <JyunoWeb Condition="'$(JyunoWeb)' == ''">../../JyunoWeb</JyunoWeb>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jyuno.csproj" />
+    <Compile Include="$(JyunoWeb)/Engine/JyunoHost.cs" />
+    <Compile Include="$(JyunoWeb)/Engine/Problem.cs" />
+    <Compile Include="$(JyunoWeb)/Engine/Problems.cs" />
+    <Compile Include="$(JyunoWeb)/Engine/VerdictInfo.cs" />
+  </ItemGroup>
+
+</Project>

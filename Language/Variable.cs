@@ -49,7 +49,8 @@ public class NativeConstantVariable : NativeVariable
 
 public class JyunoVariable : VariableInterface
 {
-    object? value;
+    //제한 모드 엔진이 상수가 아닌 변수에 바로 쓰기 위해 internal
+    internal object? value;
     public JyunoVariable(object? value)
     {
         this.value = value;
