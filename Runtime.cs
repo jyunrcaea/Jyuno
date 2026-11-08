@@ -44,6 +44,16 @@ public class Runtime
         interpreters.Add(interpret , alive);
         return interpret;
     }
+    /// <summary>
+    /// 미리 컴파일한 바이너리(.jyc)를 검증하고 인터프리터를 만듭니다. 검증에 실패하면 <see cref="Compiler.JyunoImageException"/>이 발생합니다.
+    /// </summary>
+    public Interpreter Load(ReadOnlySpan<byte> image , Compiler.JyunoImageLoadOptions? options = null) => Create(Compiler.JyunoImage.Load(image , options));
+    public Interpreter Create(Compiler.JyunoImage image)
+    {
+        Interpreter interpret = new(this , image);
+        interpreters.Add(interpret , alive);
+        return interpret;
+    }
     internal void RemoveInterpreter(Interpreter interpreter)
     {
         interpreters.Remove(interpreter);

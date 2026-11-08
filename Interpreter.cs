@@ -16,6 +16,15 @@ public partial class Interpreter : IDisposable
         //다른 인터프리터와 독립되어야 함.
         current = top = new Scope(null);
     }
+    //미리 컴파일한 바이너리에서 만듦 (토큰화를 건너뜀)
+    internal Interpreter(Runtime runtime , JyunoImage image)
+    {
+        this.runtime = runtime;
+        scripts.Capacity = image.LineCount;
+        for (int line = 0 ; line < image.LineCount ; line++)
+            scripts.Add(new(image , line));
+        current = top = new Scope(null);
+    }
     public bool EnableRemoveVariable { get; set; } = true;
     public bool BlockSubstitute { get; set; } = false;
     public Runtime runtime { get; init; }
@@ -249,6 +258,18 @@ public partial class Interpreter : IDisposable
             top_for_states.Clear();
             CurrentExecuteLine = -1;
         }
+    }
+    //(측정용) 모든 줄을 미리 토큰화/컴파일하고 블록 정보를 계산
+    internal void Tokenize()
+    {
+        foreach (CommandLine command in scripts)
+            _ = command.tokens;
+    }
+    internal void Prepare()
+    {
+        for (int line = 0 ; line < scripts.Count ; line++)
+            compiled_line(line);
+        get_blocks();
     }
     object? execute_line(int line , bool flow)
     {
@@ -716,7 +737,21 @@ public class CommandLine
     {
         script = str;
     }
-    public string script;
+    //미리 컴파일한 바이너리의 줄 (토큰은 검증을 마친 것)
+    internal CommandLine(JyunoImage image , int line)
+    {
+        this.image = image;
+        this.line = line;
+        tok = image.Lines[line];
+    }
+    readonly JyunoImage? image;
+    readonly int line;
+    string? text;
+    //원본 텍스트는 필요할 때만 꺼냄
+    public string script {
+        get => text ??= image!.GetLine(line);
+        set => text = value;
+    }
     public Token[] tokens {
         get => tok ?? Parse();
     }
