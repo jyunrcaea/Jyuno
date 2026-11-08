@@ -12,6 +12,7 @@ using System.Text.Json;
 //  speed <폴더> [반복]             벤치마크 (컴파일 포함, 새 런타임마다)
 //  build <소스> <출력>             바이너리 만들기 (JyunoWeb 채점 호스트 기준)
 //  cold-source <소스> / cold-image <바이너리> / cold-static <소스>   새 프로세스 한번 실행 (단계별 시간을 stderr로)
+//  phases-build <소스>   빌드 단계별 시간 (분석 / 제한 모드 검사 / 전체)
 static class Program
 {
     sealed class Sink : IConsoleSink
@@ -264,6 +265,26 @@ static class Program
             }
             case "noop":
                 return 0;
+            case "phases-build":
+            {
+                //빌드 단계별 시간 (분석 / 제한 모드 검사 / IR 빌드 전체), 반복 측정
+                string[] lines = File.ReadAllText(args[1]).Split('\n');
+                Runtime runtime = Host("" , out _);
+                var globals = runtime.GetGlobals();
+                for (int round = 0 ; round < 12 ; round++)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var analysis = Jyuno.Analysis.ScriptAnalysis.Analyze(lines);
+                    double a = sw.Elapsed.TotalMilliseconds;
+                    analysis.CheckNativeJs(globals);
+                    double c = sw.Elapsed.TotalMilliseconds - a;
+                    sw.Restart();
+                    JyunoProgramImage.Build(lines , runtime);
+                    double b = sw.Elapsed.TotalMilliseconds;
+                    Console.WriteLine($"analyze={a:F2} checkNativeJs={c:F2} build(all)={b:F2}");
+                }
+                return 0;
+            }
         }
         Console.Error.WriteLine("PHASES " + string.Join(" " , phases));
         return 0;

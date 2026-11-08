@@ -196,16 +196,20 @@ internal sealed class IrBuilder
 
     void error(int line , string message) => errors.Add(new GrammarError(line , message));
 
-    static int slot_of(Scope scope , string name)
+    //영역마다 이름→슬롯 표를 한번만 만듦 (큰 스크립트에서 이름마다 NameOrder를 훑으면 제곱 시간)
+    readonly Dictionary<Scope , Dictionary<string , int>> slot_tables = new(ReferenceEqualityComparer.Instance);
+
+    int slot_of(Scope scope , string name)
     {
-        int i = 0;
-        foreach (string n in scope.NameOrder)
+        if (!slot_tables.TryGetValue(scope , out Dictionary<string , int>? table))
         {
-            if (n == name)
-                return i;
-            i++;
+            table = new(StringComparer.Ordinal);
+            int i = 0;
+            foreach (string n in scope.NameOrder)
+                table.TryAdd(n , i++);
+            slot_tables[scope] = table;
         }
-        throw new InvalidOperationException($"영역에 '{name}'이/가 없습니다.");
+        return table.TryGetValue(name , out int slot) ? slot : throw new InvalidOperationException($"영역에 '{name}'이/가 없습니다.");
     }
 
     int import(string name)
