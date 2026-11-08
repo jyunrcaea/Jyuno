@@ -5,7 +5,7 @@ using Jyuno;
 using Jyuno.Benchmarks;
 
 //사용법: Jyuno.Benchmarks [--iterations N] [--filter name1,name2,...] [--json]
-//--filter: 이름에 포함된 벤치마크만, 적은 순서대로 실행 (프로필 오염 실험용)
+//--filter: 이름에 포함된 벤치마크만, 적은 순서대로 실행 (한 프로세스에서 이어서 실행할 때의 영향도 비교할수 있음)
 //각 반복마다 새 Runtime/Interpreter를 만들어서(컴파일 포함) 실행 시간을 잼
 int iterations = 30;
 string? filter = null;

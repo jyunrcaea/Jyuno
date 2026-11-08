@@ -96,8 +96,8 @@ public partial class Interpreter
                     Expr[] arguments = compile_arguments(tokens , 1 , out _);
                     Func<object?[]> evaluate = make_arguments(arguments);
                     line.Arguments = evaluate;
-                    //[실험] 조건이 하나라면 인자 배열을 만들지 않고 바로 참/거짓을 판단
-                    if (Specialize is not SpecializeMode.Off && arguments.Length is 1)
+                    //조건이 하나라면 인자 배열을 만들지 않고 바로 참/거짓을 판단
+                    if (arguments.Length is 1)
                     {
                         Func<object?> condition = arguments[0].Eval;
                         line.Condition = () => Parser.IsTrue(condition());
@@ -306,7 +306,7 @@ public partial class Interpreter
             }
             throw new JyunoException($"'{name}'는 함수 또는 변수가 아닙니다.");
         }
-        //[실험] 호출 자리 특화 (프로필 기반)
+        //내장 함수 호출 자리라면 특화 (Compiler/IntrinsicCall.cs)
         Func<object?> call = specialize_call(site , arguments , invoke) ?? (() => {
             if (!resolve(site , out object? holder))
                 throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");

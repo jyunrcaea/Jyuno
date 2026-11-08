@@ -1,9 +1,9 @@
 namespace Jyuno.Tests;
 
-//[실험] 호출 자리 특화: 특화한 다음에 가정(같은 내장 함수, 같은 인자 타입)이 깨져도 결과가 같아야 함
+//내장 함수 호출 자리 특화: 빠른 경로가 처리하지 못하는 값이 오거나, 이름이 다른 것을 가리키게 되어도 결과가 같아야 함
 public class SpecializationTests
 {
-    //특화되도록 충분히 실행한 다음, 마지막에 타입을 바꿈
+    //같은 호출 자리를 여러 번 실행한 다음, 마지막에 인자 타입을 바꿈
     static string[] TypeChangeAfterWarmup(string op , string warm , string changed) => new[] {
         $"x = {warm}",
         "i = 0",

@@ -2,8 +2,9 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- 같은 벤치마크를 .NET 8 / .NET 10 런타임에서 비교하기 위해 둘 다 빌드 -->
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <!-- 다른 .NET 버전에서 재려면 -p:BenchFramework=net10.0 처럼 지정 -->
+    <BenchFramework Condition="'$(BenchFramework)' == ''">net8.0</BenchFramework>
+    <TargetFramework>$(BenchFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
