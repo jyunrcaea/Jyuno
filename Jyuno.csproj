@@ -4,8 +4,8 @@
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- 테스트 프로젝트가 하위 폴더에 있으므로 라이브러리 빌드에서 제외 -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);Jyuno.Tests/**</DefaultItemExcludes>
+    <!-- 테스트/벤치마크 프로젝트가 하위 폴더에 있으므로 라이브러리 빌드에서 제외 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Jyuno.Tests/**;Jyuno.Benchmarks/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <!-- NuGet 패키지 정보 (버전은 릴리즈 워크플로우에서 태그로 지정) -->

@@ -59,6 +59,8 @@ public partial class Interpreter
         public Func<object?[]> Arguments = () => Array.Empty<object?>();
         //local (이름) = (값) 의 값
         public Func<object?>? LocalValue;
+        //if/while의 조건
+        public Func<bool> Condition = () => false;
     }
 
     CompiledLine compiled_line(int line)
@@ -88,10 +90,24 @@ public partial class Interpreter
             line.Keyword = keyword;
             switch (keyword)
             {
-                case KeywordType.Return:
-                case KeywordType.Goto:
                 case KeywordType.If:
                 case KeywordType.While:
+                {
+                    Expr[] arguments = compile_arguments(tokens , 1 , out _);
+                    Func<object?[]> evaluate = make_arguments(arguments);
+                    line.Arguments = evaluate;
+                    //[실험] 조건이 하나라면 인자 배열을 만들지 않고 바로 참/거짓을 판단
+                    if (Specialize is not SpecializeMode.Off && arguments.Length is 1)
+                    {
+                        Func<object?> condition = arguments[0].Eval;
+                        line.Condition = () => Parser.IsTrue(condition());
+                    }
+                    else
+                        line.Condition = () => is_true(evaluate());
+                    break;
+                }
+                case KeywordType.Return:
+                case KeywordType.Goto:
                 case KeywordType.Repeat:
                     line.Arguments = make_arguments(compile_arguments(tokens , 1 , out _));
                     break;
@@ -251,9 +267,9 @@ public partial class Interpreter
         bool has_arguments = start + 1 < tokens.Length && !is_prefix(tokens , start + 1 , ')');
         Expr[] arguments = compile_arguments(tokens , start + 1 , out end);
         Func<object?[]> evaluate_arguments = make_arguments(arguments);
-        Func<object?> call = () => {
-            if (!resolve(site , out object? holder))
-                throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
+        //이름이 가리키는 것(holder)을 원래대로 실행
+        object? invoke(object? holder)
+        {
             //함수 or 변수
             if (holder is FunctionInterface fi)
                 return fi.Execute(evaluate_arguments());
@@ -289,7 +305,13 @@ public partial class Interpreter
                 return value;
             }
             throw new JyunoException($"'{name}'는 함수 또는 변수가 아닙니다.");
-        };
+        }
+        //[실험] 호출 자리 특화 (프로필 기반)
+        Func<object?> call = specialize_call(site , arguments , invoke) ?? (() => {
+            if (!resolve(site , out object? holder))
+                throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
+            return invoke(holder);
+        });
         bool may_end_early = closed && has_arguments;
         return try_fold(site , arguments , call , may_end_early) ?? new Expr(call) { MayEndEarly = may_end_early };
     }
