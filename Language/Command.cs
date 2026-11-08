@@ -10,24 +10,24 @@ public static class JyunoCommands
         dict.AddConstantVariable("null" , () => null);
         dict.AddConstantVariable("true", () => true);
         dict.AddConstantVariable("false",() => false);
-        dict.AddFunction("int" , args => {
+        dict.AddPureFunction("int" , args => {
             if (args.Length is 0)
                 return 0L;
             if (args.Length == 1)
                 return Values.ToInteger(args[0] ?? throw null_exception);
             return null;
         });
-        dict.AddFunction("double" , args => {
+        dict.AddPureFunction("double" , args => {
             if (args.Length is 0)
                 return 0.0;
             if (args.Length is 1)
                 return Values.ToReal(args[0] ?? throw null_exception);
             return null;
         });
-        dict.AddFunction("string" , args => args.Length is 0 ? string.Empty : Convert.ToString((args[0] ?? throw null_exception) , CultureInfo.InvariantCulture));
+        dict.AddPureFunction("string" , args => args.Length is 0 ? string.Empty : Convert.ToString((args[0] ?? throw null_exception) , CultureInfo.InvariantCulture));
         dict.AddFunction("array" , args => Collections.NewArray(args));
         dict.AddFunction("list" , args => Collections.NewList(args));
-        dict.AddFunction("length" , args => {
+        dict.AddPureFunction("length" , args => {
             if (args.Length is 0)
                 throw new JyunoException("길이를 구할 값이 필요합니다.");
             return args[0] switch {
@@ -37,7 +37,7 @@ public static class JyunoCommands
                 _ => throw new JyunoException($"'{args[0]}'은/는 문자열 또는 배열/리스트가 아니므로 길이를 구할수 없습니다.")
             };
         });
-        dict.AddFunction("add" , args => {
+        dict.AddPureFunction("add" , args => {
             if (args.Length is 0)
                 throw new JyunoException("덧셈을 할 값들을 넣지 않았습니다.");
             //첫 인자가 배열/리스트라면, 나머지 인자를 이어붙인 새 컬렉션 (컬렉션 인자는 한번만 펼침)
@@ -46,19 +46,20 @@ public static class JyunoCommands
             if (args.Length is 1)
                 return args[0];
             //문자열이 하나라도 있다면, 모두 문자열 연산
-            if (args.Count(x => x is string) > 0)
+            foreach (object? arg in args)
             {
-                return string.Concat(args);
+                if (arg is string)
+                    return string.Concat(args);
             }
             //그렇지 않으면 수 연산
-            dynamic? sum = args[0];
+            object? sum = args[0];
             for(int i=1 ;i<args.Length; i++)
             {
-                sum += (dynamic?)args[i];
+                sum = Values.Add(sum , args[i]);
             }
             return sum;
         });
-        dict.AddFunction("sub" , args => {
+        dict.AddPureFunction("sub" , args => {
             if (args.Length < 2)
                 throw new JyunoException("뺄셈 할 값 2개가 필요합니다.");
             //첫 인자가 배열/리스트라면 차집합 (두번째 인자에 있는 원소를 모두 제거한 새 컬렉션)
@@ -73,7 +74,7 @@ public static class JyunoCommands
                 return double_a - double_b;
             throw new JyunoException("숫자 또는 문자열 이외에는 뺄셈 연산을 할수 없습니다.");
         });
-        dict.AddFunction("mul" , args => {
+        dict.AddPureFunction("mul" , args => {
             if (args.Length is 0)
                 return 1L;
             if (args[0] is string str)
@@ -85,12 +86,12 @@ public static class JyunoCommands
                 //음수 횟수는 0번 반복한 것으로 취급
                 return string.Concat(Enumerable.Repeat(str , (int)Math.Clamp(count , 0 , int.MaxValue)));
             }
-            dynamic? mul = 1L;
+            object? mul = 1L;
             for(int i=0 ;i<args.Length;i++)
-                mul *= (dynamic)(args[i] ?? throw null_exception);
+                mul = Values.Multiply(mul , args[i] ?? throw null_exception);
             return mul;
-        });
-        dict.AddFunction("div" , args => {
+        } , fold_mul);
+        dict.AddPureFunction("div" , args => {
             if (args.Length < 2)
                 throw new JyunoException("나눗셈 할 값 2개가 필요합니다.");
             //문자열을 나누면 구분자로 자른 문자열 배열 (C#의 a.Split(b))
@@ -99,17 +100,17 @@ public static class JyunoCommands
             object divisor = args[1] ?? throw null_exception;
             if (Values.TryGetInteger(divisor , out long zero) && zero is 0)
                 throw new JyunoException("0으로 나눌수 없습니다.");
-            return (dynamic)(args[0] ?? throw null_exception) / (dynamic)divisor;
+            return Values.Divide(args[0] ?? throw null_exception , divisor);
         });
-        dict.AddFunction("mod" , args => {
+        dict.AddPureFunction("mod" , args => {
             if (args.Length < 2)
                 throw new JyunoException("모듈로 연산 할 값 2개가 필요합니다.");
             object divisor = args[1] ?? throw null_exception;
             if (Values.TryGetInteger(divisor , out long zero) && zero is 0)
                 throw new JyunoException("0으로 나눌수 없습니다.");
-            return (dynamic)(args[0] ?? throw null_exception) % (dynamic)divisor;
+            return Values.Modulo(args[0] ?? throw null_exception , divisor);
         });
-        dict.AddFunction("equal" , args => {
+        dict.AddPureFunction("equal" , args => {
             if (args.Length < 2)
                 throw new JyunoException("비교할 대상이 최소 2개 이상 있어야 합니다.");
             for(int i=1 ;i<args.Length;i++)
@@ -119,7 +120,7 @@ public static class JyunoCommands
             }
             return true;
         });
-        dict.AddFunction("bool" , args => args.Length > 0 && Parser.IsTrue(args[0]));
+        dict.AddPureFunction("bool" , args => args.Length > 0 && Parser.IsTrue(args[0]));
     }
     public static void AddConsole(VariableDictionary dict)
     {
@@ -163,39 +164,39 @@ public static class JyunoCommands
         dict.AddConstantVariable("math.pi" , () => Math.PI);
         dict.AddConstantVariable("math.nan" , () => double.NaN);
         dict.AddConstantVariable("math.tau" , () => Math.Tau);
-        dict.AddFunction("math.sin" , args => {
+        dict.AddPureFunction("math.sin" , args => {
             if (args.Length is 0)
                 throw new JyunoException("사인 값을 구할 인자가 필요합니다.");
             return Math.Sin(real_argument(args[0]));
         });
-        dict.AddFunction("math.cos" , args => {
+        dict.AddPureFunction("math.cos" , args => {
             if (args.Length is 0)
                 throw new JyunoException("코사인 값을 구할 인자가 필요합니다.");
             return Math.Cos(real_argument(args[0]));
         });
-        dict.AddFunction("math.tan" , args => {
+        dict.AddPureFunction("math.tan" , args => {
             if (args.Length is 0)
                 throw new JyunoException("탄젠트 값을 구할 인자가 필요합니다.");
             return Math.Tan(real_argument(args[0]));
         });
-        dict.AddFunction("math.pow" , args => {
+        dict.AddPureFunction("math.pow" , args => {
             if (args.Length < 2)
                 throw new JyunoException("거듭제곱에 필요한 밑과 지수가 누락되었습니다.");
             return Math.Pow(real_argument(args[0]) , real_argument(args[1]));
         });
-        dict.AddFunction("math.log" , args => {
+        dict.AddPureFunction("math.log" , args => {
             if (args.Length < 1)
                 throw new JyunoException("로그에 필요한 진수가 누락되었습니다.");
             if (args.Length is 1)
                 return Math.Log10(real_argument(args[0]));
             return Math.Log(real_argument(args[0]) , real_argument(args[1]));
         });
-        dict.AddFunction("math.log2" , args => {
+        dict.AddPureFunction("math.log2" , args => {
             if (args.Length < 1)
                 throw new JyunoException("로그에 필요한 진수가 누락되었습니다.");
             return Math.Log2(real_argument(args[0]));
         });
-        dict.AddFunction("math.abs" , args => {
+        dict.AddPureFunction("math.abs" , args => {
             if (args.Length is 0)
                 throw new JyunoException("절댓값을 구할 값이 필요합니다.");
             return Math.Abs((dynamic)(args[0] ?? throw null_exception));
@@ -268,6 +269,14 @@ public static class JyunoCommands
             File.Delete(path);
             return true;
         });
+    }
+
+    //문자열 반복은 결과가 너무 길어질수 있으므로, 짧을 때만 미리 계산
+    static bool fold_mul(object?[] args)
+    {
+        if (args.Length >= 2 && args[0] is string str && Values.TryGetInteger(args[1] , out long count))
+            return count <= 0 || str.Length * Math.Min(count , 1 << 20) <= 4096;
+        return true;
     }
 
     //수학 함수의 인자를 실수로 변환 (박싱된 long을 (double)로 캐스팅하면 예외가 나므로)
