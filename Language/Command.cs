@@ -25,9 +25,14 @@ public static class JyunoCommands
             return null;
         });
         dict.AddFunction("string" , args => args.Length is 0 ? string.Empty : Convert.ToString((args[0] ?? throw null_exception) , CultureInfo.InvariantCulture));
+        dict.AddFunction("array" , args => Collections.NewArray(args));
+        dict.AddFunction("list" , args => Collections.NewList(args));
         dict.AddFunction("add" , args => {
             if (args.Length is 0)
                 throw new JyunoException("덧셈을 할 값들을 넣지 않았습니다.");
+            //첫 인자가 배열/리스트라면, 나머지 인자를 이어붙인 새 컬렉션 (컬렉션 인자는 한번만 펼침)
+            if (args[0] is System.Collections.IList collection)
+                return Collections.Add(collection , args , 1);
             if (args.Length is 1)
                 return args[0];
             //문자열이 하나라도 있다면, 모두 문자열 연산
@@ -46,6 +51,9 @@ public static class JyunoCommands
         dict.AddFunction("sub" , args => {
             if (args.Length < 2)
                 throw new JyunoException("뺄셈 할 값 2개가 필요합니다.");
+            //첫 인자가 배열/리스트라면 차집합 (두번째 인자에 있는 원소를 모두 제거한 새 컬렉션)
+            if (args[0] is System.Collections.IList collection)
+                return Collections.Sub(collection , args[1]);
             if (args[0] is string str)
                 return str.Replace((string)(args[1] ?? throw null_exception), string.Empty);
             //정수끼리는 정수로, 실수가 섞여있다면 실수로 계산
@@ -75,6 +83,9 @@ public static class JyunoCommands
         dict.AddFunction("div" , args => {
             if (args.Length < 2)
                 throw new JyunoException("나눗셈 할 값 2개가 필요합니다.");
+            //문자열을 나누면 구분자로 자른 문자열 배열 (C#의 a.Split(b))
+            if (args[0] is string text)
+                return text.Split(Convert.ToString(args[1] ?? throw null_exception , CultureInfo.InvariantCulture) ?? string.Empty);
             object divisor = args[1] ?? throw null_exception;
             if (Values.TryGetInteger(divisor , out long zero) && zero is 0)
                 throw new JyunoException("0으로 나눌수 없습니다.");
