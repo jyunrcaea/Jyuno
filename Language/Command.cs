@@ -157,6 +157,34 @@ public static class JyunoCommands
             return !Parser.IsTrue(args[0]);
         } , intrinsic: Intrinsic.Not);
         dict.AddPureFunction("bool" , args => args.Length > 0 && Parser.IsTrue(args[0]));
+        AddCollection(dict);
+    }
+    //배열/리스트를 다루는 명령어 (array.*, list.*)
+    //sort, reverse, shuffle은 원래 컬렉션을 바꾸고 그대로 반환하며, 배열과 리스트 모두 받을수 있음
+    //list.push, list.pop 등 길이를 바꾸는 명령어는 리스트에서만 쓸수 있음
+    //컬렉션은 상수가 될수 없으므로 미리 계산(상수 계산)하지 않는 일반 함수로 추가
+    static void AddCollection(VariableDictionary dict)
+    {
+        foreach (string kind in new[] { "array" , "list" })
+        {
+            string sort = $"{kind}.sort", reverse = $"{kind}.reverse", shuffle = $"{kind}.shuffle", contains = $"{kind}.contains",
+                indexof = $"{kind}.indexof", slice = $"{kind}.slice", join = $"{kind}.join", create = $"{kind}.new";
+            bool array = kind is "array";
+            dict.AddFunction(sort , args => Collections.Sort(args , sort));
+            dict.AddFunction(reverse , args => Collections.Reverse(args , reverse));
+            dict.AddFunction(shuffle , args => Collections.Shuffle(args , shuffle));
+            dict.AddFunction(contains , args => Collections.Contains(args , contains));
+            dict.AddFunction(indexof , args => Collections.IndexOf(args , indexof));
+            dict.AddFunction(slice , args => Collections.Slice(args , slice));
+            dict.AddFunction(join , args => Collections.Join(args , join));
+            dict.AddFunction(create , args => Collections.New(args , array , create));
+        }
+        dict.AddFunction("list.push" , args => Collections.Push(args , "list.push"));
+        dict.AddFunction("list.pop" , args => Collections.Pop(args , "list.pop"));
+        dict.AddFunction("list.insert" , args => Collections.Insert(args , "list.insert"));
+        dict.AddFunction("list.removeat" , args => Collections.RemoveAt(args , "list.removeat"));
+        dict.AddFunction("list.remove" , args => Collections.Remove(args , "list.remove"));
+        dict.AddFunction("list.clear" , args => Collections.Clear(args , "list.clear"));
     }
     public static void AddConsole(VariableDictionary dict)
     {
@@ -232,6 +260,10 @@ public static class JyunoCommands
                 throw new JyunoException("로그에 필요한 진수가 누락되었습니다.");
             return Math.Log2(real_argument(args[0]));
         });
+        //난수는 호출할때마다 값이 달라지므로 미리 계산하지 않는 일반 함수로 추가
+        //math.random: 빠른 난수 (System.Random), math.csprng: 암호학적으로 안전한 난수 (RandomNumberGenerator)
+        dict.AddFunction("math.random" , args => RandomValues.Fast.Next(args , "math.random"));
+        dict.AddFunction("math.csprng" , args => RandomValues.Secure.Next(args , "math.csprng"));
         dict.AddPureFunction("math.abs" , args => {
             if (args.Length is 0)
                 throw new JyunoException("절댓값을 구할 값이 필요합니다.");
