@@ -180,6 +180,42 @@ static class Program
                 }
                 return 0;
             }
+            case "corpus":
+            {
+                //채점 문제 풀이를 첫 예제 입력으로, 같은 프로세스에서 반복 (JIT 이후의 비용)
+                var jobs = new List<(string[] Lines, string Input, byte[] Image)>();
+                foreach (Problem problem in Problems.All)
+                {
+                    string path = Path.Combine(args[1] , $"{problem.Id}.jyuno");
+                    if (!File.Exists(path)) continue;
+                    string[] lines = File.ReadAllText(path).Replace("\r\n" , "\n").Split('\n');
+                    jobs.Add((lines , problem.AllCases[0].Input , JyunoProgramImage.Build(lines , Host("" , out _))));
+                }
+                int n = int.Parse(args[2]);
+                double ti = 0 , ts = 0 , tl = 0 , tc = 0;
+                for (int i = 0 ; i < n ; i++)
+                {
+                    GC.Collect();
+                    long a = Stopwatch.GetTimestamp();
+                    foreach (var job in jobs) { var rt = Host(job.Input , out _); rt.Create(job.Lines).Run(); }
+                    long b = Stopwatch.GetTimestamp();
+                    foreach (var job in jobs) { var rt = Host(job.Input , out _); JyunoProgramImage.Load(job.Image , rt).Run(); }
+                    long c = Stopwatch.GetTimestamp();
+                    foreach (var job in jobs) { var rt = Host(job.Input , out _); JyunoProgramImage.Load(job.Image , rt); }
+                    long d = Stopwatch.GetTimestamp();
+                    foreach (var job in jobs) { var rt = Host(job.Input , out _); JyunoProgramImage.Compile(job.Lines , rt); }
+                    long e = Stopwatch.GetTimestamp();
+                    long h0 = Stopwatch.GetTimestamp();
+                    foreach (var job in jobs) Host(job.Input , out _);
+                    long h1 = Stopwatch.GetTimestamp();
+                    if (i >= n / 2) { ti += b - a - (h1 - h0); ts += c - b - (h1 - h0); tl += d - c - (h1 - h0); tc += e - d - (h1 - h0); }
+                }
+                double k = (n - n / 2) * (double)Stopwatch.Frequency / 1e3;
+                int total_lines = jobs.Sum(j => j.Lines.Length);
+                Console.WriteLine($"{jobs.Count}개 풀이, {total_lines}줄, 바이너리 {jobs.Sum(j => j.Image.Length)} B (소스 {jobs.Sum(j => j.Lines.Sum(l => l.Length + 1))} B)");
+                Console.WriteLine($"한 바퀴: 인터프리터 생성+실행 {ti / k:F3} ms | 제한 모드 불러오기+실행 {ts / k:F3} ms | 불러오기(검증+연결+클로저)만 {tl / k:F3} ms | 소스에서 빌드+연결 {tc / k:F3} ms");
+                return 0;
+            }
             case "build":
             {
                 string[] lines = File.ReadAllText(args[1]).Replace("\r\n" , "\n").Split('\n');
