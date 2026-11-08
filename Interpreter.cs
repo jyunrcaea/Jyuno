@@ -234,7 +234,28 @@ public class Interpreter : IDisposable
                 else if (f is VariableInterface vi)
                 {
                     end = start + 1;
-                    return vi.Get();
+                    object? value = vi.Get();
+                    //배열/리스트 뒤에 인자가 있다면 인덱스 읽기 (l 0) 또는 쓰기 (l 0 값)
+                    if (value is System.Collections.IList list && start + 1 < tokens.Length && !checkvalue(tokens , start + 1 , TokenType.Prefix , ')'))
+                    {
+                        var index = token2value(tokens , start + 1 , out end);
+                        switch (index.Count)
+                        {
+                            case 0:
+                                return list;
+                            case 1:
+                                return Collections.Get(list , index.First());
+                            case 2:
+                                //대입 연산이 금지되었는가?
+                                if (BlockSubstitute)
+                                    throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
+                                Collections.Set(list , index.First() , index.Last());
+                                return null;
+                            default:
+                                throw new JyunoException("배열/리스트는 '(이름) (인덱스)' 또는 '(이름) (인덱스) (값)' 형식으로만 쓸수 있습니다.");
+                        }
+                    }
+                    return value;
                 }
                 else
                     throw new JyunoException($"'{token.value}'는 함수 또는 변수가 아닙니다.");
