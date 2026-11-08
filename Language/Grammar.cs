@@ -14,7 +14,8 @@ public class Grammar
         {"break", KeywordType.Break },
         {"param", KeywordType.Param },
         {"endfunc", KeywordType.EndFunc },
-        {"local", KeywordType.Local }
+        {"local", KeywordType.Local },
+        {"for", KeywordType.For }
     };
 
     public static HashSet<char> Prefixes = new() {
@@ -24,7 +25,8 @@ public class Grammar
     public static HashSet<KeywordType> Conditionals = new() {
         KeywordType.If,
         KeywordType.While,
-        KeywordType.Repeat
+        KeywordType.Repeat,
+        KeywordType.For
     };
 }
 
@@ -58,5 +60,6 @@ public enum KeywordType
     Break,
     Param,
     EndFunc,
-    Local
+    Local,
+    For
 }
