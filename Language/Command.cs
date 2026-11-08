@@ -158,6 +158,7 @@ public static class JyunoCommands
         } , intrinsic: Intrinsic.Not);
         dict.AddPureFunction("bool" , args => args.Length > 0 && Parser.IsTrue(args[0]));
         AddCollection(dict);
+        Strings.Add(dict);
     }
     //배열/리스트를 다루는 명령어 (array.*, list.*)
     //sort, reverse, shuffle은 원래 컬렉션을 바꾸고 그대로 반환하며, 배열과 리스트 모두 받을수 있음
@@ -178,6 +179,19 @@ public static class JyunoCommands
             dict.AddFunction(slice , args => Collections.Slice(args , slice));
             dict.AddFunction(join , args => Collections.Join(args , join));
             dict.AddFunction(create , args => Collections.New(args , array , create));
+            //1.4.2
+            string copy = $"{kind}.copy", lastindexof = $"{kind}.lastindexof", count = $"{kind}.count", distinct = $"{kind}.distinct",
+                binary_search = $"{kind}.binary_search", fill = $"{kind}.fill", min = $"{kind}.min", max = $"{kind}.max", sum = $"{kind}.sum", range = $"{kind}.range";
+            dict.AddFunction(copy , args => Collections.Copy(args , copy));
+            dict.AddFunction(lastindexof , args => Collections.LastIndexOf(args , lastindexof));
+            dict.AddFunction(count , args => Collections.Count(args , count));
+            dict.AddFunction(distinct , args => Collections.Distinct(args , distinct));
+            dict.AddFunction(binary_search , args => Collections.BinarySearch(args , binary_search));
+            dict.AddFunction(fill , args => Collections.Fill(args , fill));
+            dict.AddFunction(min , args => Collections.Extreme(args , -1 , min));
+            dict.AddFunction(max , args => Collections.Extreme(args , 1 , max));
+            dict.AddFunction(sum , args => Collections.Sum(args , sum));
+            dict.AddFunction(range , args => Collections.Range(args , array , range));
         }
         dict.AddFunction("list.push" , args => Collections.Push(args , "list.push"));
         dict.AddFunction("list.pop" , args => Collections.Pop(args , "list.pop"));

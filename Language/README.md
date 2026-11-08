@@ -322,6 +322,15 @@ console.writeline (words 1)
 | ``array.slice (컬렉션) (시작)`` / ``array.slice (컬렉션) (시작) (끝)`` | 시작 인덱스부터 끝 인덱스 바로 앞까지(끝을 생략하면 마지막까지)의 원소로 새 배열/리스트를 만듭니다. |
 | ``array.join (컬렉션)`` / ``array.join (컬렉션) (구분자)`` | 원소를 문자열로 바꿔서 구분자(생략하면 빈 문자열)로 이어붙인 문자열을 반환합니다. ``null``은 빈 문자열이 됩니다. |
 | ``array.new (길이)`` / ``array.new (길이) (값)`` | 모든 원소가 값(생략하면 ``null``)인 배열을 만듭니다. ``list.new``는 리스트를 만듭니다. |
+| ``array.copy (컬렉션)`` | 같은 종류, 같은 원소 타입의 새 배열/리스트로 복사합니다. (원소 자체는 복사하지 않는 얕은 복사, 1.4.2부터) |
+| ``array.lastindexof (컬렉션) (값)`` | 값과 같은 마지막 원소의 인덱스를 반환합니다. 없다면 ``-1``을 반환합니다. (1.4.2부터) |
+| ``array.count (컬렉션) (값)`` | 값과 같은 원소의 개수를 반환합니다. (1.4.2부터) |
+| ``array.distinct (컬렉션)`` | 중복된 원소를 제거한 새 배열/리스트를 반환합니다. 같은 값이 여러개라면 처음 나온 원소를 남깁니다. (1.4.2부터) |
+| ``array.binary_search (컬렉션) (값)`` | 오름차순으로 정렬된 배열/리스트에서 값을 이진 탐색합니다. 찾았다면 그 인덱스(같은 값이 여러개라면 가장 앞)를, 없다면 값이 들어갈 위치를 ``not``으로 반전한 음수를 반환합니다. (C#의 ``Array.BinarySearch``, 1.4.2부터) |
+| ``array.fill (컬렉션) (값)`` | 모든 원소를 값으로 바꿉니다. (1.4.2부터) |
+| ``array.min (컬렉션)`` / ``array.max (컬렉션)`` | 가장 작은/큰 원소를 반환합니다. 같은 값이 여러개라면 앞의 원소를 반환하며, 빈 배열/리스트라면 오류가 발생합니다. (1.4.2부터) |
+| ``array.sum (컬렉션)`` | 모든 원소(숫자)를 ``add``와 같이 더한 값을 반환합니다. 빈 배열/리스트라면 ``0``입니다. (1.4.2부터) |
+| ``array.range (끝)`` / ``array.range (시작) (끝)`` / ``array.range (시작) (끝) (간격)`` | 시작(생략하면 0)부터 끝 바로 앞까지 간격(생략하면 1)만큼 커지는 정수 배열을 만듭니다. 간격이 음수라면 작아집니다. ``list.range``는 리스트를 만듭니다. (1.4.2부터) |
 | ``list.push (리스트) (값) (값) ...`` | 리스트 끝에 값들을 추가합니다. |
 | ``list.pop (리스트)`` | 마지막 원소를 제거하고, 그 원소를 반환합니다. |
 | ``list.insert (리스트) (인덱스) (값)`` | 인덱스 위치에 값을 끼워넣습니다. (인덱스가 길이와 같다면 끝에 추가) |
@@ -329,8 +338,8 @@ console.writeline (words 1)
 | ``list.remove (리스트) (값)`` | 값과 같은 첫 원소를 제거합니다. 제거했다면 ``true``, 없다면 ``false``를 반환합니다. |
 | ``list.clear (리스트)`` | 모든 원소를 제거합니다. |
 
-``sort``, ``reverse``, ``shuffle``, ``push``, ``insert``, ``clear``는 새 배열/리스트를 만들지 않고 **원래 배열/리스트를 바꾸며**, 바꾼 배열/리스트를 그대로 반환합니다.  
-원래 배열/리스트를 그대로 두고 싶다면 ``array.slice (컬렉션) 0``으로 복사한 뒤에 사용하세요. (``slice``는 항상 새 배열/리스트를 만듭니다.)
+``sort``, ``reverse``, ``shuffle``, ``fill``, ``push``, ``insert``, ``clear``는 새 배열/리스트를 만들지 않고 **원래 배열/리스트를 바꾸며**, 바꾼 배열/리스트를 그대로 반환합니다.  
+원래 배열/리스트를 그대로 두고 싶다면 ``array.slice (컬렉션) 0``으로 복사한 뒤에 사용하세요. (``slice``, ``copy``, ``distinct``는 항상 새 배열/리스트를 만듭니다.) 1.4.2부터는 ``array.copy``로 복사할수도 있습니다.
 ```
 scores = list 70 95 80
 list.push scores 60
@@ -339,10 +348,49 @@ console.writeline (list.join scores ', ')
 ```
 위 코드는 ``95, 80, 70, 60``을 출력합니다.
 
-정렬은 ``less``/``greater``와 같은 기준(숫자는 값, 문자열은 유니코드 순서)으로 비교하며, 같은 값끼리는 내림차순이더라도 원래 순서를 유지합니다. (안정 정렬)  
+정렬(``sort``, ``binary_search``, ``min``, ``max``)은 ``less``/``greater``와 같은 기준(숫자는 값, 문자열은 유니코드 순서)으로 비교하며, 같은 값끼리는 내림차순이더라도 원래 순서를 유지합니다. (안정 정렬)  
 숫자와 문자열, ``null``처럼 크기를 비교할수 없는 값이 섞여 있다면 오류가 발생합니다. ``math.nan``은 오름차순이라면 가장 앞에, 내림차순이라면 가장 뒤에 둡니다.  
-``contains``, ``indexof``, ``remove``는 ``equal``과 같은 기준으로 비교합니다. (``1``과 ``1.0``은 같음)  
+``contains``, ``indexof``, ``lastindexof``, ``count``, ``distinct``, ``remove``는 ``equal``과 같은 기준으로 비교합니다. (``1``과 ``1.0``은 같음)  
 ``list.push``, ``list.insert``로 넣는 값이 리스트의 원소 타입에 맞지 않으면(예: ``list 1 2``로 만든 정수 리스트에 문자열) 오류가 발생합니다. 아무 값이나 넣고 싶다면 ``list``(빈 리스트)로 만드세요.
+## 문자열 함수 (string.\*)
+C#의 ``System.String`` 메서드를 옮긴 함수입니다. (1.4.2부터)  
+문자열을 받는 자리에 다른 타입의 값을 넣으면 오류가 발생합니다. (``string.concat``, ``string.join``, ``string.format``은 모든 값을 문자열로 바꿉니다.)  
+문자열을 찾고 비교하는 함수는 모두 유니코드 값(서수, C#의 ``StringComparison.Ordinal``) 기준이므로 대소문자를 구별하며, 대소문자 변환은 문화권과 무관합니다. (C#의 ``ToUpperInvariant``)  
+인덱스는 첫 글자가 0이며, 범위를 벗어나면 오류가 발생합니다.
+
+| 함수 | 설명 |
+|---|---|
+| ``string.concat (값) (값) ...`` | 값들을 문자열로 바꿔서 이어붙입니다. ``null``은 빈 문자열이 됩니다. |
+| ``string.join (구분자) (값) (값) ...`` | 값들을 구분자로 이어붙입니다. 값이 배열/리스트 하나라면 그 원소들을 이어붙입니다. |
+| ``string.format (형식) (값) (값) ...`` | C#의 ``string.Format``처럼 ``{0}``, ``{1:F2}``, ``{0,5}`` 자리에 값을 넣습니다. ``{0}``이 첫번째 값입니다. (``console.write``와 달리 형식 문자열은 세지 않음) |
+| ``string.compare (a) (b)`` | 유니코드 순서로 비교해서 a가 앞이면 ``-1``, 같으면 ``0``, 뒤면 ``1``을 반환합니다. ``null``은 가장 앞입니다. |
+| ``string.equals (a) (b)`` / ``string.equals (a) (b) true`` | 두 문자열이 같은지 비교합니다. 세번째 인자가 참이라면 대소문자를 무시합니다. |
+| ``string.isnullorempty (값)`` | 값이 ``null`` 또는 빈 문자열이라면 ``true``를 반환합니다. |
+| ``string.isnullorwhitespace (값)`` | 값이 ``null``이거나 공백 문자로만 이루어졌다면 ``true``를 반환합니다. |
+| ``string.indexof (문자열) (찾을 문자열)`` / ``... (시작)`` | 찾을 문자열이 처음 나오는 인덱스를 반환합니다. 없다면 ``-1``입니다. 시작 인덱스부터 찾을수도 있습니다. |
+| ``string.lastindexof (문자열) (찾을 문자열)`` | 찾을 문자열이 마지막으로 나오는 인덱스를 반환합니다. 없다면 ``-1``입니다. |
+| ``string.contains (문자열) (찾을 문자열)`` | 찾을 문자열이 있다면 ``true``를 반환합니다. |
+| ``string.startswith (문자열) (값)`` / ``string.endswith (문자열) (값)`` | 값으로 시작하는지/끝나는지 검사합니다. |
+| ``string.replace (문자열) (바꿀 문자열) (새 문자열)`` | 바꿀 문자열을 모두 새 문자열로 바꿉니다. 새 문자열이 ``null``이라면 제거합니다. |
+| ``string.substring (문자열) (시작)`` / ``... (시작) (길이)`` | 시작 인덱스부터 길이만큼(생략하면 끝까지)의 문자열을 반환합니다. |
+| ``string.insert (문자열) (인덱스) (값)`` | 인덱스 위치에 값을 끼워넣은 문자열을 반환합니다. |
+| ``string.remove (문자열) (시작)`` / ``... (시작) (개수)`` | 시작 인덱스부터 개수만큼(생략하면 끝까지)의 글자를 제거한 문자열을 반환합니다. |
+| ``string.toupper (문자열)`` / ``string.tolower (문자열)`` | 대문자/소문자로 바꾼 문자열을 반환합니다. |
+| ``string.trim (문자열)`` / ``string.trimstart`` / ``string.trimend`` | 양쪽/앞쪽/뒤쪽의 공백 문자를 제거합니다. 두번째 인자로 문자열을 넣으면 그 문자열에 있는 글자들을 제거합니다. (``string.trim 'xxhixx' 'x'``는 ``'hi'``) |
+| ``string.padleft (문자열) (길이)`` / ``string.padright`` / ``... (글자)`` | 길이가 될때까지 앞쪽/뒤쪽에 글자(생략하면 공백)를 채웁니다. (``string.padleft '7' 3 '0'``은 ``'007'``) |
+| ``string.split (문자열) (구분자)`` / ``string.split (문자열)`` | 구분자로 나눈 문자열 배열을 반환합니다. (``div``와 같음) 구분자를 생략하면 공백 문자마다 나눕니다. |
+| ``string.tochararray (문자열)`` | 한 글자씩 나눈 문자열 배열을 반환합니다. |
+| ``string.charcode (문자열)`` / ``... (인덱스)`` | 인덱스(생략하면 0) 위치 글자의 UTF-16 코드를 정수로 반환합니다. (``string.charcode 'A'``는 ``65``) |
+| ``string.fromcharcode (코드) (코드) ...`` | UTF-16 코드(0 ~ 65535)들로 문자열을 만듭니다. (``string.fromcharcode 72 105``는 ``'Hi'``) |
+
+```
+name = '  Jyunni  '
+name = string.trim name
+console.writeline (string.format 'Hello, {0}! ({1}글자)' (string.toupper name) (length name))
+console.writeline (string.join ', ' (string.split 'c b a' ' '))
+```
+위 코드는 ``Hello, JYUNNI! (6글자)``, ``c, b, a`` 순서로 출력합니다.
+
 ## 비교/논리 연산
 ### less, greater
 ``less a b``는 C 계열 언어의 ``a < b``, ``greater a b``는 ``a > b``와 같습니다.  
@@ -389,7 +437,8 @@ Jyuno를 사용하는 C# 프로그램이 일부 Jyuno 명령어를 비활성화 
 - 배열: ``array (any) (any) ...`` (주어진 인자를 원소로 하는 배열)
 - 리스트: ``list (any) (any) ...`` (주어진 인자를 원소로 하는 리스트)
 - 길이: ``length (string|array|list)`` (문자열의 글자 수, 또는 배열/리스트의 원소 개수)
-- 컬렉션: ``array.sort``, ``array.reverse``, ``array.shuffle``, ``array.contains``, ``array.indexof``, ``array.slice``, ``array.join``, ``array.new`` (``list.``로 시작하는 같은 이름의 함수도 있음), ``list.push``, ``list.pop``, ``list.insert``, ``list.removeat``, ``list.remove``, ``list.clear`` ([컬렉션 함수](#컬렉션-함수-array-list) 참고)
+- 컬렉션: ``array.sort``, ``array.reverse``, ``array.shuffle``, ``array.contains``, ``array.indexof``, ``array.slice``, ``array.join``, ``array.new``, ``array.copy``, ``array.lastindexof``, ``array.count``, ``array.distinct``, ``array.binary_search``, ``array.fill``, ``array.min``, ``array.max``, ``array.sum``, ``array.range`` (``list.``로 시작하는 같은 이름의 함수도 있음), ``list.push``, ``list.pop``, ``list.insert``, ``list.removeat``, ``list.remove``, ``list.clear`` ([컬렉션 함수](#컬렉션-함수-array-list) 참고)
+- 문자열: ``string.concat``, ``string.join``, ``string.format``, ``string.indexof``, ``string.replace``, ``string.substring``, ``string.trim``, ``string.split`` 등 ([문자열 함수](#문자열-함수-string) 참고)
 - 비교: ``equal (any) (any) ...`` (개수에 상관없이 주어진 모든 인자를 비교합니다. 모두 동일하면 true, 하나라도 서로 다를경우 false를 반환합니다.) 
 - 작다: ``less (int|double|string) (int|double|string) ...`` (앞의 값이 뒤의 값보다 작으면 true. 인자가 셋 이상이라면 모든 인자가 오름차순인지 검사합니다.)
 - 크다: ``greater (int|double|string) (int|double|string) ...`` (앞의 값이 뒤의 값보다 크면 true. 인자가 셋 이상이라면 모든 인자가 내림차순인지 검사합니다.)

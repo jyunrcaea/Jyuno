@@ -195,7 +195,7 @@ internal static class Collections
         return args[0] switch {
             IList list => list,
             null => throw JyunoCommands.null_exception,
-            _ => throw new JyunoException($"{name}: '{args[0]}'은/는 배열/리스트가 아닙니다.")
+            _ => throw new JyunoException($"{name}: '{Values.Show(args[0])}'은/는 배열/리스트가 아닙니다.")
         };
     }
 
@@ -230,7 +230,7 @@ internal static class Collections
     static int integer_argument(object? value , string what , long min , long max , string name)
     {
         if (!Values.TryGetInteger(value , out long i))
-            throw new JyunoException($"{name}: {what}은/는 정수여야 합니다. ('{value ?? "null"}')");
+            throw new JyunoException($"{name}: {what}은/는 정수여야 합니다. ('{Values.Show(value)}')");
         if (i < min || i > max)
             throw new JyunoException($"{name}: {what} {i}은/는 범위({min} ~ {max})를 벗어났습니다.");
         return (int)i;
@@ -361,12 +361,163 @@ internal static class Collections
         return array ? NewArray(items) : NewList(items);
     }
 
+    //array.copy / list.copy: 같은 종류, 같은 원소 타입의 새 컬렉션 (얕은 복사)
+    public static IList Copy(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        return create_like(list , new List<object?>(items_of(list)));
+    }
+
+    //array.lastindexof / list.lastindexof: equal과 같은 기준으로 마지막으로 같은 원소의 인덱스 (없다면 -1)
+    public static long LastIndexOf(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        if (args.Length < 2)
+            throw new JyunoException($"{name}: 찾을 값이 필요합니다.");
+        for (int i = list.Count - 1 ; i >= 0 ; i--)
+        {
+            if (Values.Same(list[i] , args[1]))
+                return i;
+        }
+        return -1;
+    }
+
+    //array.count / list.count: equal과 같은 기준으로 같은 원소의 개수
+    public static long Count(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        if (args.Length < 2)
+            throw new JyunoException($"{name}: 셀 값이 필요합니다.");
+        long count = 0;
+        foreach (object? item in list)
+        {
+            if (Values.Same(item , args[1]))
+                count++;
+        }
+        return count;
+    }
+
+    //array.distinct / list.distinct: equal과 같은 기준으로 중복을 제거한 새 컬렉션 (처음 나온 원소를 남김)
+    public static IList Distinct(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        HashSet<object?> seen = new(SameComparer.Instance);
+        List<object?> items = new();
+        foreach (object? item in list)
+        {
+            if (seen.Add(item))
+                items.Add(item);
+        }
+        return create_like(list , items);
+    }
+
+    //array.binary_search / list.binary_search: 오름차순으로 정렬된 컬렉션에서 값의 인덱스 (sort와 같은 기준)
+    //같은 값이 여러개라면 가장 앞의 인덱스, 없다면 들어갈 위치의 비트 반전(C#의 Array.BinarySearch처럼 음수, not으로 위치를 구할수 있음)
+    public static long BinarySearch(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        if (args.Length < 2)
+            throw new JyunoException($"{name}: 찾을 값이 필요합니다.");
+        int low = 0, high = list.Count;
+        while (low < high)
+        {
+            int middle = low + (high - low) / 2;
+            if (compare(list[middle] , args[1]) < 0)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        if (low < list.Count && compare(list[low] , args[1]) == 0)
+            return low;
+        return ~(long)low;
+    }
+
+    //array.fill / list.fill: 모든 원소를 값으로 바꿈 (원래 컬렉션을 바꾸고 그대로 반환)
+    public static IList Fill(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        writable(list , name);
+        object? value = fit(list , args.Length > 1 ? args[1] : null , name);
+        for (int i = 0 ; i < list.Count ; i++)
+            list[i] = value;
+        return list;
+    }
+
+    //array.min, array.max: sort와 같은 기준으로 가장 작은/큰 원소 (같다면 앞의 원소)
+    public static object? Extreme(object?[] args , int sign , string name)
+    {
+        IList list = Target(args , name);
+        if (list.Count is 0)
+            throw new JyunoException($"{name}: 빈 컬렉션입니다.");
+        object? best = list[0];
+        for (int i = 1 ; i < list.Count ; i++)
+        {
+            object? item = list[i];
+            if (sign * compare(item , best) > 0)
+                best = item;
+        }
+        return best;
+    }
+
+    //array.sum / list.sum: 모든 원소(숫자)를 add와 같이 더함 (빈 컬렉션이라면 0)
+    public static object? Sum(object?[] args , string name)
+    {
+        IList list = Target(args , name);
+        object? sum = 0L;
+        foreach (object? item in list)
+        {
+            if (!Values.TryGetReal(item , out _))
+                throw new JyunoException($"{name}: '{Values.Show(item)}'은/는 숫자가 아닙니다.");
+            sum = Values.Add(sum , item);
+        }
+        return sum;
+    }
+
+    //array.range / list.range: 정수 수열 (count → 0 ~ count-1, start end → start ~ end-1, start end step → step 간격)
+    public static IList Range(object?[] args , bool array , string name)
+    {
+        if (args.Length is 0)
+            throw new JyunoException($"{name}: 범위가 필요합니다.");
+        long start = 0, end, step = 1;
+        long integer(int i , string what)
+        {
+            if (!Values.TryGetInteger(args[i] , out long value))
+                throw new JyunoException($"{name}: {what}은/는 정수여야 합니다. ('{Values.Show(args[i])}')");
+            return value;
+        }
+        if (args.Length is 1)
+        {
+            end = integer(0 , "끝");
+        }
+        else
+        {
+            start = integer(0 , "시작");
+            end = integer(1 , "끝");
+            if (args.Length > 2)
+                step = integer(2 , "간격");
+        }
+        if (step is 0)
+            throw new JyunoException($"{name}: 간격은 0이 될수 없습니다.");
+        //원소 개수 (long 범위 전체에서 넘치지 않도록 ulong으로 계산)
+        ulong count = 0;
+        if (step > 0 && start < end)
+            count = unchecked((ulong)(end - start) - 1) / (ulong)step + 1;
+        else if (step < 0 && start > end)
+            count = unchecked((ulong)(start - end) - 1) / unchecked((ulong)(-step)) + 1;
+        if (count > (ulong)Array.MaxLength)
+            throw new JyunoException($"{name}: 원소가 너무 많습니다. ({count}개)");
+        long[] items = new long[count];
+        for (int i = 0 ; i < items.Length ; i++)
+            items[i] = unchecked(start + i * step);
+        return array ? items : new List<long>(items);
+    }
+
     //원소 타입에 맞게 변환 (list.push, list.insert)
     static object? fit(IList list , object? value , string name)
     {
         Type element = ElementType(list);
         if (!TryFit(value , element , out object? fitted))
-            throw new JyunoException($"{name}: '{value ?? "null"}'은/는 이 리스트의 원소 타입({element.Name})에 넣을수 없습니다.");
+            throw new JyunoException($"{name}: '{Values.Show(value)}'은/는 이 컬렉션의 원소 타입({element.Name})에 넣을수 없습니다.");
         return fitted;
     }
 

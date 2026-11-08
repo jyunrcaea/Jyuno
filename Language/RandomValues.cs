@@ -37,7 +37,7 @@ internal abstract class RandomValues
     long integer(long min , long max , string name)
     {
         if (min >= max)
-            throw new JyunoException($"{name}: 범위가 비어있습니다. (최솟값 {min}이/가 최댓값 {max}보다 작아야 합니다)");
+            throw new JyunoException($"{name}: 범위가 비어있습니다. (최솟값 {Values.Show(min)}이/가 최댓값 {Values.Show(max)}보다 작아야 합니다)");
         return NextInteger(min , max);
     }
 
@@ -46,7 +46,7 @@ internal abstract class RandomValues
         if (!double.IsFinite(min) || !double.IsFinite(max))
             throw new JyunoException($"{name}: 범위는 유한한 숫자여야 합니다.");
         if (min >= max)
-            throw new JyunoException($"{name}: 범위가 비어있습니다. (최솟값 {min}이/가 최댓값 {max}보다 작아야 합니다)");
+            throw new JyunoException($"{name}: 범위가 비어있습니다. (최솟값 {Values.Show(min)}이/가 최댓값 {Values.Show(max)}보다 작아야 합니다)");
         while (true)
         {
             double u = NextReal();
@@ -62,7 +62,7 @@ internal abstract class RandomValues
     {
         if (Values.TryGetReal(value ?? throw JyunoCommands.null_exception , out double result))
             return result;
-        throw new JyunoException($"{name}: '{value}'은/는 숫자가 아닙니다.");
+        throw new JyunoException($"{name}: '{Values.Show(value)}'은/는 숫자가 아닙니다.");
     }
 
     //System.Random (스레드 안전한 Random.Shared)

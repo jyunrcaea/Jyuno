@@ -5,6 +5,9 @@ namespace Jyuno.Language;
 //Jyuno 값(object?)의 숫자 변환/비교를 위한 도구
 internal static class Values
 {
+    //오류 메시지에 넣을 값 (문화권과 무관하게, null은 "null")
+    public static string Show(object? value) => value is null ? "null" : Convert.ToString(value , CultureInfo.InvariantCulture) ?? string.Empty;
+
     //정수형 값이라면 long으로 꺼냄 (박싱된 long을 (int)로 캐스팅하면 예외가 나므로)
     public static bool TryGetInteger(object? value , out long result)
     {
