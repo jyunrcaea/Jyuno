@@ -116,6 +116,113 @@ public class FunctionTests
     }
 
     [Fact]
+    public void Assignment_InsideFunction_CreatesLocalVariable()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  x = 1", "  out x", "endfunc", "f", "return x");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { 1L }, output);
+    }
+
+    [Fact]
+    public void OuterVariables_CanBeReadInsideFunction()
+    {
+        var (result, _) = Script.Run("base = 10", "func f", "  param a", "  return (add base a)", "endfunc", "return (f 5)");
+        Assert.Equal(15L, result);
+    }
+
+    [Fact]
+    public void LocalVariable_CanShadowOuterVariableAfterReadingIt()
+    {
+        var (result, output) = Script.Run("n = 1", "func f", "  n = add n 1", "  out n", "endfunc", "f", "f", "return n");
+        Assert.Equal(1L, result);
+        Assert.Equal(new object?[] { 2L, 2L }, output);
+    }
+
+    [Fact]
+    public void RecursiveCalls_KeepTheirOwnLocalVariables()
+    {
+        var (_, output) = Script.Run(
+            "func r",
+            "  param d",
+            "  x = d",
+            "  if d",
+            "    r (sub d 1)",
+            "  end",
+            "  out x",
+            "endfunc",
+            "r 2");
+        Assert.Equal(new object?[] { 0L, 1L, 2L }, output);
+    }
+
+    [Fact]
+    public void LoopVariable_IsNotOverwrittenByCalledFunction()
+    {
+        var (_, output) = Script.Run(
+            "func inner",
+            "  i = 100",
+            "endfunc",
+            "func outer",
+            "  i = 0",
+            "  repeat 3",
+            "    i = add i 1",
+            "    inner",
+            "    out i",
+            "  end",
+            "endfunc",
+            "outer");
+        Assert.Equal(new object?[] { 1L, 2L, 3L }, output);
+    }
+
+    [Fact]
+    public void CallerLocalVariables_AreNotVisibleInsideCalledFunction()
+    {
+        Assert.Throws<JyunoException>(() => Script.Run(
+            "func inner",
+            "  return secret",
+            "endfunc",
+            "func outer",
+            "  secret = 1",
+            "  return (inner)",
+            "endfunc",
+            "outer"));
+    }
+
+    [Fact]
+    public void NestedFunction_CanReadEnclosingFunctionVariables()
+    {
+        var (result, _) = Script.Run(
+            "func outer",
+            "  param a",
+            "  func inner",
+            "    param b",
+            "    return (add a b)",
+            "  endfunc",
+            "  return (inner 2)",
+            "endfunc",
+            "return (outer 40)");
+        Assert.Equal(42L, result);
+    }
+
+    [Fact]
+    public void Removing_InsideFunction_DoesNotRemoveOuterVariable()
+    {
+        var (result, output) = Script.Run("x = 5", "func f", "  out (x =)", "endfunc", "f", "return x");
+        Assert.Equal(5L, result);
+        Assert.Equal(new object?[] { false }, output);
+    }
+
+    [Fact]
+    public void RuntimeVariable_CanBeSetInsideFunction()
+    {
+        Runtime runtime = new();
+        object? stored = null;
+        runtime.AddVariable("host.value", () => stored, v => stored = v);
+        Interpreter interpreter = runtime.Create(new[] { "func f", "  host.value = 7", "endfunc", "f" });
+        interpreter.Run();
+        Assert.Equal(7L, stored);
+    }
+
+    [Fact]
     public void LoopsAndBreak_WorkInsideFunction()
     {
         var (result, _) = Script.Run(
