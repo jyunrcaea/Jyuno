@@ -237,3 +237,90 @@ public class CollectionFunctionTests
         }
     }
 }
+
+//1.4.2에서 추가한 array.*, list.* 명령어
+public class CollectionFunctionTests2
+{
+    [Fact]
+    public void Copy_IsShallowAndKeepsType()
+    {
+        var (_, output) = Script.Run("a = array 1 2", "b = array.copy a", "b 0 9", "out a", "out b", "out (list.copy (list 'x'))");
+        Assert.Equal(new long[] { 1, 2 }, output[0]);
+        Assert.Equal(new long[] { 9, 2 }, output[1]);
+        Assert.Equal(new List<string> { "x" }, output[2]);
+    }
+
+    [Fact]
+    public void LastIndexOf_Count()
+    {
+        Assert.Equal(2L, Script.Eval("array.lastindexof (array 1 2 1.0) 1"));
+        Assert.Equal(-1L, Script.Eval("list.lastindexof (list) 1"));
+        Assert.Equal(2L, Script.Eval("array.count (array 1 2 1.0) 1"));
+        Assert.Equal(0L, Script.Eval("array.count (array 'a') 'b'"));
+    }
+
+    [Fact]
+    public void Distinct()
+    {
+        Assert.Equal(new long[] { 3, 1, 2 }, Script.Eval("array.distinct (array 3 1 3 2 1)"));
+        Assert.Equal(new object?[] { 1L, "1", null }, Script.Eval("array.distinct (array 1 '1' 1.0 null null)"));
+        Assert.Equal(new List<string> { "a", "b" }, Script.Eval("list.distinct (list 'a' 'b' 'a')"));
+        var nans = (double[])Script.Eval("array.distinct (array math.nan math.nan 1.5)")!;
+        Assert.Equal(3, nans.Length);
+    }
+
+    [Fact]
+    public void BinarySearch()
+    {
+        Assert.Equal(1L, Script.Eval("array.binary_search (array 1 3 3 3 5) 3"));
+        Assert.Equal(0L, Script.Eval("array.binary_search (array 1 3 5) 1"));
+        Assert.Equal(-3L, Script.Eval("array.binary_search (array 1 3 5) 4"));
+        Assert.Equal(2L, Script.Eval("not (array.binary_search (array 1 3 5) 4)"));
+        Assert.Equal(-1L, Script.Eval("list.binary_search (list) 'a'"));
+        Assert.Equal(1L, Script.Eval("list.binary_search (list 'a' 'b') 'b'"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.binary_search (array 1 2) 'a'"));
+    }
+
+    [Fact]
+    public void Fill()
+    {
+        var (_, output) = Script.Run("a = array 1 2 3", "array.fill a 0", "out a", "out (list.fill (list 1.5 2.5) 1)");
+        Assert.Equal(new long[] { 0, 0, 0 }, output[0]);
+        Assert.Equal(new List<double> { 1, 1 }, output[1]);
+        Assert.Throws<JyunoException>(() => Script.Eval("array.fill (array 1) 'a'"));
+        Assert.Equal(new object?[] { null, null }, Script.Eval("array.fill (array 1 'a')"));
+    }
+
+    [Fact]
+    public void MinMaxSum()
+    {
+        Assert.Equal(1L, Script.Eval("array.min (array 3 1 2)"));
+        Assert.Equal(3L, Script.Eval("list.max (list 3 1 2)"));
+        Assert.Equal(1L, Script.Eval("array.min (array 2 1 1.0)"));
+        Assert.Equal(2.0, Script.Eval("array.max (array 2.0 1 2)"));
+        Assert.Equal("b", Script.Eval("array.max (array 'a' 'b')"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.min (array)"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.max (array 1 'a')"));
+        Assert.Equal(6L, Script.Eval("array.sum (array 1 2 3)"));
+        Assert.Equal(6.5, Script.Eval("list.sum (list 1 2 3.5)"));
+        Assert.Equal(0L, Script.Eval("array.sum (array)"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.sum (array 1 'a')"));
+    }
+
+    [Fact]
+    public void Range()
+    {
+        Assert.Equal(new long[] { 0, 1, 2 }, Script.Eval("array.range 3"));
+        Assert.Equal(new long[] { 2, 3, 4 }, Script.Eval("array.range 2 5"));
+        Assert.Equal(new long[] { 0, 3, 6, 9 }, Script.Eval("array.range 0 10 3"));
+        Assert.Equal(new long[] { 5, 3, 1 }, Script.Eval("array.range 5 0 -2"));
+        Assert.Equal(Array.Empty<long>(), Script.Eval("array.range 5 0"));
+        Assert.Equal(Array.Empty<long>(), Script.Eval("array.range -3"));
+        Assert.Equal(new List<long> { 1, 2 }, Script.Eval("list.range 1 3"));
+        Assert.Equal(new long[] { 9223372036854775806 }, Script.Eval("array.range 9223372036854775806 9223372036854775807"));
+        Assert.Equal(new long[] { 9223372036854775807, 0 }, Script.Eval("array.range 9223372036854775807 -1 -9223372036854775807"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.range 0 10 0"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.range 1.5"));
+        Assert.Throws<JyunoException>(() => Script.Eval("array.range -9223372036854775808 9223372036854775807"));
+    }
+}
