@@ -229,7 +229,7 @@ public sealed class ParameterStatement : Statement
     internal ParameterStatement(int line) : base(StatementKind.Param , line) { }
     public string? Name { get; internal set; }
     /// <summary>함수의 몇번째 파라미터인지</summary>
-    public int Index { get; internal set; }
+    public int ParameterIndex { get; internal set; }
 }
 
 public sealed class LocalStatement : Statement

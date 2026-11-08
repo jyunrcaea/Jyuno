@@ -289,7 +289,7 @@ public sealed class ScriptAnalysis
                     line++;
                     break;
                 case KeywordType.Param:
-                    add(block , new ParameterStatement(line) { TokenError = error , Name = tokens.Length == 2 ? name_at(line , 1) : null , Index = map.ParamIndex[line] });
+                    add(block , new ParameterStatement(line) { TokenError = error , Name = tokens.Length == 2 ? name_at(line , 1) : null , ParameterIndex = map.ParamIndex[line] });
                     if (function is not null)
                         function.ParameterCount = Math.Max(function.ParameterCount , map.ParamIndex[line] + 1);
                     line++;
