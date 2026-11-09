@@ -7,16 +7,17 @@ namespace Jyuno.Tests;
 public class StaticProgramTests
 {
     static readonly string[] Sample = {
-        "func fib",
+        //위조 퍼징에서 상수가 바뀌어도 끝나도록 지수 시간 재귀(fib) 대신 선형 재귀 (호출 깊이 제한에 걸림)
+        "func sum",
         "    param n",
-        "    if (less n 2)",
-        "        return n",
+        "    if (less n 1)",
+        "        return 0",
         "    end",
-        "    return (add (fib (sub n 1)) (fib (sub n 2)))",
+        "    return (add n (sum (sub n 1)))",
         "endfunc",
         "total = 0",
         "for x (list 1 2 3 4 5)",
-        "    total = add total (fib x)",
+        "    total = add total (sum x)",
         "    if (greater total 6)",
         "        break",
         "    end",

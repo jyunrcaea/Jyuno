@@ -69,11 +69,21 @@ static class Program
     }
 
     //빌드는 별도 프로필 런타임으로, 실행은 새 호스트 런타임에 불러와서 (바이너리를 거침)
+    //JYUNO_ENGINE=Il 이면 fuzz/judge의 제한 모드를 IL 컴파일로 실행 (못하면 클로저 엔진, 개수를 셈)
+    static readonly JyunoEngine engine = Enum.Parse<JyunoEngine>(Environment.GetEnvironmentVariable("JYUNO_ENGINE") ?? "Closure");
+    static int il_compiled , il_fallback;
+    static readonly Dictionary<string , int> fallback_reasons = new();
+
     static Outcome Static(string[] lines , string input)
     {
         byte[] image = JyunoProgramImage.Build(lines , Host("" , out _));
         Runtime runtime = Host(input , out Sink sink);
-        JyunoProgram program = JyunoProgramImage.Load(image , runtime);
+        JyunoProgram program = JyunoProgramImage.Load(image , runtime , engine);
+        if (engine is not JyunoEngine.Closure)
+        {
+            if (program.Engine == engine.ToString()) il_compiled++;
+            else { il_fallback++; fallback_reasons[program.Engine] = fallback_reasons.GetValueOrDefault(program.Engine) + 1; }
+        }
         return Execute(program.Run , sink);
     }
 
@@ -125,6 +135,12 @@ static class Program
                     }
                 }
                 Console.WriteLine($"비교 {compared}, 일치 {compared - mismatched}, 불일치 {mismatched}, 제한 모드로 빌드 거부 {skipped}");
+                if (engine is not JyunoEngine.Closure)
+                {
+                    Console.WriteLine($"  {engine}: 컴파일 {il_compiled}, 클로저 엔진으로 대신 실행 {il_fallback}");
+                    foreach (var (reason , n) in fallback_reasons.OrderByDescending(o => o.Value).Take(8))
+                        Console.WriteLine($"    {reason} {n}");
+                }
                 foreach (var (reason , n) in reasons.OrderByDescending(o => o.Value))
                     Console.WriteLine($"  거부 이유: {reason} {n}");
                 return mismatched > 0 ? 1 : 0;
@@ -156,17 +172,27 @@ static class Program
                     if (ok_s) ac_static++;
                 }
                 Console.WriteLine($"문제 {problems}개, 케이스 {cases}개: 인터프리터 AC {ac_interp}, 제한 모드 AC {ac_static}, 두 방식의 결과가 같은 케이스 {same}");
+                if (engine is not JyunoEngine.Closure)
+                {
+                    Console.WriteLine($"  {engine}: 컴파일 {il_compiled}, 클로저 엔진으로 대신 실행 {il_fallback}");
+                    foreach (var (reason , n) in fallback_reasons.OrderByDescending(o => o.Value).Take(8))
+                        Console.WriteLine($"    {reason} {n}");
+                }
                 return 0;
             }
             case "speed":
             {
                 int n = args.Length > 2 ? int.Parse(args[2]) : 20;
+                //JYUNO_ENGINE=ExpressionInterpreter: JIT가 없는 런타임(AOT, WASM)에서 식 트리가 해석 실행되는 경우
+                JyunoEngine fast = engine is JyunoEngine.Closure ? JyunoEngine.Il : engine;
                 foreach (string file in Directory.GetFiles(args[1] , "*.jyuno").OrderBy(o => o))
                 {
                     string[] lines = File.ReadAllText(file).Replace("\r\n" , "\n").TrimEnd('\n').Split('\n');
                     byte[] image = JyunoProgramImage.Build(lines , new Runtime(Runtime.AddJyunoCommandType.Math));
-                    List<double> ti = new() , ts = new() , tl = new();
-                    object? ri = null , rs = null;
+                    List<double> ti = new() , ts = new() , tj = new() , tjr = new();
+                    object? ri = null , rs = null , rj = null;
+                    string used = "";
+                    JyunoProgram warm = JyunoProgramImage.Load(image , new Runtime(Runtime.AddJyunoCommandType.Math) , fast);
                     for (int i = 0 ; i < n ; i++)
                     {
                         var sw = Stopwatch.StartNew();
@@ -175,9 +201,18 @@ static class Program
                         sw.Restart();
                         rs = JyunoProgramImage.Load(image , new Runtime(Runtime.AddJyunoCommandType.Math)).Run();
                         ts.Add(sw.Elapsed.TotalMilliseconds);
+                        sw.Restart();
+                        JyunoProgram jit = JyunoProgramImage.Load(image , new Runtime(Runtime.AddJyunoCommandType.Math) , fast);
+                        rj = jit.Run();
+                        tj.Add(sw.Elapsed.TotalMilliseconds);
+                        used = jit.Engine;
+                        sw.Restart();
+                        warm.Run();
+                        tjr.Add(sw.Elapsed.TotalMilliseconds);
                     }
                     double med(List<double> x) => x.Skip(n / 2).OrderBy(o => o).ElementAt((n - n / 2) / 2);
-                    Console.WriteLine($"{Path.GetFileNameWithoutExtension(file),-22} 인터프리터 {med(ti),8:F2} ms   제한 모드 {med(ts),8:F2} ms   {med(ti) / med(ts),5:F2}x   결과 {(Show(ri) == Show(rs) ? "같음" : $"다름 {Show(ri)} {Show(rs)}")}");
+                    bool same = Show(ri) == Show(rs) && Show(ri) == Show(rj);
+                    Console.WriteLine($"{Path.GetFileNameWithoutExtension(file),-22} 인터프리터 {med(ti),8:F3}  클로저 {med(ts),8:F3}  IL(컴파일 포함) {med(tj),8:F3}  IL(실행만) {med(tjr),8:F3} ms  [{used}] {(same ? "같음" : $"다름 {Show(ri)} {Show(rs)} {Show(rj)}")}");
                 }
                 return 0;
             }
@@ -193,7 +228,7 @@ static class Program
                     jobs.Add((lines , problem.AllCases[0].Input , JyunoProgramImage.Build(lines , Host("" , out _))));
                 }
                 int n = int.Parse(args[2]);
-                double ti = 0 , ts = 0 , tl = 0 , tc = 0;
+                double ti = 0 , ts = 0 , tl = 0 , tc = 0 , tj = 0;
                 for (int i = 0 ; i < n ; i++)
                 {
                     GC.Collect();
@@ -209,12 +244,15 @@ static class Program
                     long h0 = Stopwatch.GetTimestamp();
                     foreach (var job in jobs) Host(job.Input , out _);
                     long h1 = Stopwatch.GetTimestamp();
-                    if (i >= n / 2) { ti += b - a - (h1 - h0); ts += c - b - (h1 - h0); tl += d - c - (h1 - h0); tc += e - d - (h1 - h0); }
+                    long j0 = Stopwatch.GetTimestamp();
+                    foreach (var job in jobs) { var rt = Host(job.Input , out _); JyunoProgramImage.Load(job.Image , rt , JyunoEngine.Il).Run(); }
+                    long j1 = Stopwatch.GetTimestamp();
+                    if (i >= n / 2) { ti += b - a - (h1 - h0); ts += c - b - (h1 - h0); tl += d - c - (h1 - h0); tc += e - d - (h1 - h0); tj += j1 - j0 - (h1 - h0); }
                 }
                 double k = (n - n / 2) * (double)Stopwatch.Frequency / 1e3;
                 int total_lines = jobs.Sum(j => j.Lines.Length);
                 Console.WriteLine($"{jobs.Count}개 풀이, {total_lines}줄, 바이너리 {jobs.Sum(j => j.Image.Length)} B (소스 {jobs.Sum(j => j.Lines.Sum(l => l.Length + 1))} B)");
-                Console.WriteLine($"한 바퀴: 인터프리터 생성+실행 {ti / k:F3} ms | 제한 모드 불러오기+실행 {ts / k:F3} ms | 불러오기(검증+연결+클로저)만 {tl / k:F3} ms | 소스에서 빌드+연결 {tc / k:F3} ms");
+                Console.WriteLine($"한 바퀴: 인터프리터 생성+실행 {ti / k:F3} ms | 제한 모드 불러오기+실행 {ts / k:F3} ms | 불러오기(검증+연결+클로저)만 {tl / k:F3} ms | 소스에서 빌드+연결 {tc / k:F3} ms | IL 불러오기(컴파일)+실행 {tj / k:F3} ms");
                 return 0;
             }
             case "build":
@@ -265,6 +303,18 @@ static class Program
             }
             case "noop":
                 return 0;
+            case "jitdump":
+            {
+                //[실험] IL 백엔드가 만든 식 트리 출력
+                string[] lines = File.ReadAllText(args[1]).Replace("\r\n" , "\n").TrimEnd('\n').Split('\n');
+                byte[] image = JyunoProgramImage.Build(lines , new Runtime(Runtime.AddJyunoCommandType.Math));
+                JyunoProgram p = JyunoProgramImage.Load(image , new Runtime(Runtime.AddJyunoCommandType.Math) , JyunoEngine.Il);
+                Console.WriteLine(p.Engine);
+                var jit = typeof(Interpreter).GetNestedType("StaticJit" , System.Reflection.BindingFlags.NonPublic)!;
+                var lambda = (System.Linq.Expressions.LambdaExpression?)jit.GetField("LastLambda" , System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null);
+                Console.WriteLine(typeof(System.Linq.Expressions.Expression).GetProperty("DebugView" , System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(lambda));
+                return 0;
+            }
             case "phases-build":
             {
                 //빌드 단계별 시간 (분석 / 제한 모드 검사 / IR 빌드 전체), 반복 측정

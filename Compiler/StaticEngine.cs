@@ -12,6 +12,8 @@ public sealed class JyunoProgram
     internal JyunoProgram(Func<object?> run) { this.run = run; }
     readonly Func<object?> run;
     bool running;
+    /// <summary>[실험] 실제로 쓰인 실행 방식 (IL 컴파일을 못했다면 이유)</summary>
+    public string Engine { get; internal init; } = "Closure";
     /// <summary>처음부터 끝까지 실행합니다. (Interpreter.Run과 같은 값을 돌려줌)</summary>
     public object? Run()
     {

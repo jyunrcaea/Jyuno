@@ -48,9 +48,11 @@ internal static class Collections
     }
 
     //컬렉션의 원소 타입 (알수 없다면 object)
-    public static Type ElementType(IList list)
+    public static Type ElementType(IList list) => element_types.GetOrAdd(list.GetType() , find_element_type);
+    //리스트 값을 바꿀 때마다 인터페이스 목록을 훑지 않도록 타입별로 기억
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<Type , Type> element_types = new();
+    static Type find_element_type(Type type)
     {
-        Type type = list.GetType();
         if (type.IsArray)
             return type.GetElementType()!;
         foreach (Type i in type.GetInterfaces())
@@ -173,10 +175,35 @@ internal static class Collections
     //(컬렉션) (인덱스)
     public static object? Get(IList list , object? index) => list[index_of(list , index)];
 
+    //[프로토타입] 정수 인덱스를 박싱하지 않고 (StaticJit, Get/Set과 같은 동작)
+    internal static object? GetAt(IList list , long i)
+    {
+        if (i < 0 || i >= list.Count)
+            throw new JyunoException($"인덱스 {i}은/는 범위를 벗어났습니다. (길이: {list.Count})");
+        return list[(int)i];
+    }
+    internal static void SetAt(IList list , long i , object? value)
+    {
+        if (list is List<object?> objects)
+        {
+            if (i < 0 || i >= list.Count)
+                throw new JyunoException($"인덱스 {i}은/는 범위를 벗어났습니다. (길이: {list.Count})");
+            objects[(int)i] = value;
+            return;
+        }
+        Set(list , i , value);
+    }
+
     //(컬렉션) (인덱스) (값)
     public static void Set(IList list , object? index , object? value)
     {
         int i = index_of(list , index);
+        //스크립트가 만든 리스트(List<object?>)는 어떤 값이든 넣을수 있으므로 원소 타입을 찾지 않음
+        if (list is List<object?> objects)
+        {
+            objects[i] = value;
+            return;
+        }
         Type element = ElementType(list);
         if (!TryFit(value , element , out object? fitted))
             throw new JyunoException($"'{value ?? "null"}'은/는 이 컬렉션의 원소 타입({element.Name})에 넣을수 없습니다.");

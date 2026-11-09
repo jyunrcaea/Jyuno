@@ -18,6 +18,8 @@ public class NativeFunction : FunctionInterface
     internal Func<object?[] , bool>? Foldable { get; init; }
     //호출 자리 특화에서 인자 배열 없이 바로 계산할수 있는 내장 함수의 종류 (Compiler/IntrinsicCall.cs)
     internal Intrinsic Intrinsic { get; init; }
+    //Jyuno 안에서 만든 내장 함수인지 (ReturnInfo/GrammarError를 돌려주지 않음, [프로토타입] StaticJit에서 사용)
+    internal bool IsJyunoBuiltin => func.Method.Module.Assembly == typeof(NativeFunction).Assembly;
 }
 
 //호출 자리 특화로 바로 계산할수 있는 내장 함수

@@ -1,15 +1,16 @@
-﻿namespace Jyuno.Tests;
+﻿using Jyuno.Compiler;
+namespace Jyuno.Tests;
 
 //테스트용 실행기: 스크립트를 실행하고, out 함수로 출력한 값들을 모아서 돌려줌
 internal static class Script
 {
     //제한 모드로 빌드할수 있는 스크립트는 바이너리(.jyc v2)로 저장/검증/연결해서도 실행하고 결과를 비교함
-    public static int StaticCompared, StaticSkipped;
+    public static int StaticCompared, StaticSkipped, IlCompiled, IlFallback;
     static Script()
     {
         //비교한 개수 기록 (JYUNO_STATIC_REPORT 환경 변수가 있을 때)
         if (Environment.GetEnvironmentVariable("JYUNO_STATIC_REPORT") is string path)
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => File.WriteAllText(path, $"compared={StaticCompared} skipped={StaticSkipped}");
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => File.WriteAllText(path, $"compared={StaticCompared} skipped={StaticSkipped} il={IlCompiled} il_fallback={IlFallback}");
     }
     public static (object? Result, List<object?> Output) Run(params string[] lines)
     {
@@ -27,17 +28,25 @@ internal static class Script
         if (!ReferenceEquals(compiled.Output, source.Output))
         {
             Interlocked.Increment(ref StaticCompared);
-            string script = string.Join("\n", lines);
-            Assert.True(source.Error?.GetType() == compiled.Error?.GetType(), $"예외 종류가 다름: {source.Error?.GetType().Name} / {compiled.Error?.GetType().Name} ({compiled.Error?.Message})\n{script}");
-            Assert.True(source.Error?.Message == compiled.Error?.Message, $"예외 메시지가 다름: {source.Error?.Message} / {compiled.Error?.Message}\n{script}");
-            Assert.True(Equals(source.Result, compiled.Result) || (source.Result is System.Collections.IEnumerable a && compiled.Result is System.Collections.IEnumerable b && a.Cast<object?>().SequenceEqual(b.Cast<object?>())), $"결과가 다름: {source.Result} / {compiled.Result}\n{script}");
-            Assert.True(source.Output.Count == compiled.Output.Count, $"출력 개수가 다름\n{script}");
-            for (int i = 0; i < source.Output.Count; i++)
-                Assert.True(Equals(source.Output[i], compiled.Output[i]) || (source.Output[i] is System.Collections.IEnumerable x && compiled.Output[i] is System.Collections.IEnumerable y && x.Cast<object?>().SequenceEqual(y.Cast<object?>())), $"{i}번째 출력이 다름: {source.Output[i]} / {compiled.Output[i]}\n{script}");
+            Compare(lines, source, compiled, "제한 모드");
+            //[실험] 같은 프로그램을 타입 추론 + IL 컴파일로도 실행
+            var il = Capture(() => RunOnce(lines, true, JyunoEngine.Il));
+            Compare(lines, source, il, "IL");
         }
         if (source.Error is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(source.Error);
         return (source.Result, source.Output);
+    }
+
+    static void Compare(string[] lines, (object? Result, List<object?> Output, Exception? Error) source, (object? Result, List<object?> Output, Exception? Error) compiled, string engine)
+    {
+        string script = engine + "\n" + string.Join("\n", lines);
+        Assert.True(source.Error?.GetType() == compiled.Error?.GetType(), $"예외 종류가 다름: {source.Error?.GetType().Name} / {compiled.Error?.GetType().Name} ({compiled.Error?.Message})\n{script}");
+        Assert.True(source.Error?.Message == compiled.Error?.Message, $"예외 메시지가 다름: {source.Error?.Message} / {compiled.Error?.Message}\n{script}");
+        Assert.True(Equals(source.Result, compiled.Result) || (source.Result is System.Collections.IEnumerable a && compiled.Result is System.Collections.IEnumerable b && a.Cast<object?>().SequenceEqual(b.Cast<object?>())), $"결과가 다름: {source.Result} / {compiled.Result}\n{script}");
+        Assert.True(source.Output.Count == compiled.Output.Count, $"출력 개수가 다름\n{script}");
+        for (int i = 0; i < source.Output.Count; i++)
+            Assert.True(Equals(source.Output[i], compiled.Output[i]) || (source.Output[i] is System.Collections.IEnumerable x && compiled.Output[i] is System.Collections.IEnumerable y && x.Cast<object?>().SequenceEqual(y.Cast<object?>())), $"{i}번째 출력이 다름: {source.Output[i]} / {compiled.Output[i]}\n{script}");
     }
 
     static (object? Result, List<object?> Output, Exception? Error) Capture(Func<(object?, List<object?>)> run)
@@ -57,7 +66,7 @@ internal static class Script
         }
     }
 
-    static (object? Result, List<object?> Output) RunOnce(string[] lines, bool compiled)
+    static (object? Result, List<object?> Output) RunOnce(string[] lines, bool compiled, JyunoEngine engine = JyunoEngine.Closure)
     {
         Runtime runtime = new();
         List<object?> output = new();
@@ -73,7 +82,9 @@ internal static class Script
         if (compiled)
         {
             byte[] image = Jyuno.Compiler.JyunoProgramImage.Build(lines, runtime);
-            JyunoProgram program = Jyuno.Compiler.JyunoProgramImage.Load(image, runtime);
+            JyunoProgram program = Jyuno.Compiler.JyunoProgramImage.Load(image, runtime, engine);
+            if (engine is JyunoEngine.Il)
+                Interlocked.Increment(ref program.Engine == "Il" ? ref IlCompiled : ref IlFallback);
             run = program.Run;
         }
         else

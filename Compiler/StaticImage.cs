@@ -16,6 +16,17 @@ namespace Jyuno.Compiler;
 //     내장 함수 호출은 그 내장 함수를 가져온 가져오기 표 번호
 //  3. 연결(link): 가져오기 표의 모든 이름을 호스트 런타임이 같은 종류로 제공하는지, 내장 함수로 가정한 이름은 Jyuno 내장 함수인지,
 //     스크립트 이름이 호스트 전역과 겹치지 않는지
+/// <summary>[실험] 제한 모드 프로그램을 실행하는 방식</summary>
+public enum JyunoEngine
+{
+    /// <summary>IR → 클로저 (어디서나 동작)</summary>
+    Closure,
+    /// <summary>IR → 타입 추론 → 식 트리 → IL (JIT가 있는 런타임)</summary>
+    Il,
+    /// <summary>같은 식 트리를 .NET 식 트리 인터프리터로 (JIT가 없는 런타임에서의 동작 확인용)</summary>
+    ExpressionInterpreter
+}
+
 public static class JyunoProgramImage
 {
     public static readonly byte[] Magic = { 0x89 , (byte)'J' , (byte)'Y' , (byte)'S' , 0x0D , 0x0A , 0x1A , 0x0A };
@@ -31,6 +42,9 @@ public static class JyunoProgramImage
     /// <summary>검증하고 호스트와 연결해서 실행할수 있는 프로그램을 만듭니다.</summary>
     public static JyunoProgram Load(ReadOnlySpan<byte> data , Runtime host) => Link(Read(data) , host);
 
+    /// <summary>[실험] 실행 방식을 골라서 불러옵니다. IL 컴파일을 할수 없는 프로그램은 클로저 엔진으로 실행합니다. (JyunoProgram.Engine으로 확인)</summary>
+    public static JyunoProgram Load(ReadOnlySpan<byte> data , Runtime host , JyunoEngine engine) => Link(Read(data) , host , engine);
+
     /// <summary>(측정/테스트용) 바이너리 없이 바로 빌드하고 연결합니다.</summary>
     public static JyunoProgram Compile(IReadOnlyList<string> lines , Runtime host) => Link(IrBuilder.Build(lines , host) , host);
 
@@ -39,7 +53,7 @@ public static class JyunoProgramImage
 
     #region 연결 (호스트 권한 대조)
 
-    internal static JyunoProgram Link(IrProgram program , Runtime host)
+    internal static JyunoProgram Link(IrProgram program , Runtime host , JyunoEngine engine = JyunoEngine.Closure)
     {
         List<string> errors = new();
         object?[] bound = new object?[program.Imports.Length];
@@ -87,7 +101,14 @@ public static class JyunoProgramImage
         }
         if (errors.Count > 0)
             throw new JyunoLinkException(errors);
-        return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile());
+        if (engine is not JyunoEngine.Closure)
+        {
+            Func<object?>? jit = Interpreter.StaticJit.TryCompile(program , bound , engine is JyunoEngine.ExpressionInterpreter , out string? reason);
+            if (jit is not null)
+                return new JyunoProgram(jit) { Engine = engine.ToString() };
+            return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure (" + reason + ")" };
+        }
+        return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure" };
     }
 
     static string kind_name(GlobalKind kind) => kind switch {
