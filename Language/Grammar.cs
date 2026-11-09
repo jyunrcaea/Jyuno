@@ -15,7 +15,9 @@ public class Grammar
         {"param", KeywordType.Param },
         {"endfunc", KeywordType.EndFunc },
         {"local", KeywordType.Local },
-        {"for", KeywordType.For }
+        {"for", KeywordType.For },
+        {"struct", KeywordType.Struct },
+        {"endstruct", KeywordType.EndStruct }
     };
 
     public static HashSet<char> Prefixes = new() {
@@ -61,5 +63,7 @@ public enum KeywordType
     Param,
     EndFunc,
     Local,
-    For
+    For,
+    Struct,
+    EndStruct
 }

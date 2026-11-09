@@ -190,13 +190,13 @@ public partial class Interpreter
                         if (resolve(target , out object? holder))
                         {
                             if (holder is VariableInterface vi)
-                                vi.Set(ret);
+                                assign(vi , name , ret);
                             else
                                 throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
                         }
                         else
                         {
-                            substitute_variable(name , new JyunoVariable(ret));
+                            declare_variable(name , ret);
                         }
                         return early is null ? null : new EarlyEnd(null);
                     }) { MayEndEarly = rhs.MayEndEarly };
@@ -300,9 +300,9 @@ public partial class Interpreter
                     }
                     //변수는 인자를 사용하지 않으므로, 괄호 안이라면 변수 바로 다음에 ')'가 와야 함
                     if (closed)
-                        return new EarlyEnd(value);
+                        return new EarlyEnd(read(value));
                 }
-                return value;
+                return read(value);
             }
             throw new JyunoException($"'{name}'는 함수 또는 변수가 아닙니다.");
         }
@@ -381,7 +381,7 @@ public partial class Interpreter
                         if (!resolve(site , out object? holder))
                             throw new JyunoException($"'{name}'은/는 알수없는 변수/함수 입니다.");
                         if (holder is VariableInterface vi)
-                            return vi.Get();
+                            return read(vi.Get());
                         throw new JyunoException($"'{name}'에서 값을 가져올수 없습니다.");
                     }));
                     break;

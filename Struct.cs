@@ -1,0 +1,302 @@
+using Jyuno.Language;
+using System.Collections;
+
+namespace Jyuno;
+
+//구조체 (1.5.0부터)
+//struct (이름) ~ endstruct 사이는 생성자이며, 구조체를 호출하면 새 영역에서 생성자를 실행해서 구조체 값을 만듦
+//생성자에서 만든 변수(param 포함)는 필드, 생성자에서 만든 함수는 구조체 함수가 됨 (구조체 함수의 바깥 영역은 구조체 값의 영역)
+//구조체 값을 변수에 넣으면 깊은 복사를 해서 넣고, 같은 영역에 멤버 이름(변수.필드, 변수.함수)을 선언함
+//(이미 같은 이름이 있다면 덮어씀, 구조체 값 안의 구조체는 변수.필드.필드처럼 이어서 선언)
+public partial class Interpreter
+{
+    //struct로 만든 구조체 (호출하면 구조체 값을 만드는 함수)
+    sealed class JyunoStructType : FunctionInterface
+    {
+        public JyunoStructType(Interpreter interpreter , string name , int line , int end , Scope scope)
+        {
+            this.interpreter = interpreter;
+            Name = name;
+            Line = line;
+            End = end;
+            Scope = scope;
+        }
+        readonly Interpreter interpreter;
+        public readonly string Name;
+        public readonly int Line, End;
+        //구조체를 만든 영역 (생성자와 구조체 함수에서 읽을수 있는 바깥 변수)
+        public readonly Scope Scope;
+        public JyunoStructType Rebind(Scope scope) => new(interpreter , Name , Line , End , scope);
+        //같은 struct 줄에서 만든 구조체인지
+        public bool SameDefinition(JyunoStructType other) => Line == other.Line && interpreter == other.interpreter;
+        public object? Execute(params object?[] args) => interpreter.construct(this , args);
+    }
+
+    //구조체 값
+    sealed class StructInstance : StructValue
+    {
+        public StructInstance(JyunoStructType type , Scope scope)
+        {
+            Type = type;
+            Scope = scope;
+            scope.Instance = this;
+        }
+        public readonly JyunoStructType Type;
+        //필드와 구조체 함수가 있는 영역
+        public readonly Scope Scope;
+        //생성자에서 만든 이름 (만든 순서, 멤버 이름은 제외)
+        public string[] Members = Array.Empty<string>();
+        //이 구조체 값을 담은 변수 (멤버 이름이 선언된 영역과 이름)
+        public Scope? OwnerScope;
+        public string? OwnerName;
+        //OwnerScope에 선언한 멤버 이름과 그 이름에 넣은 것 (지울때 사용)
+        public List<(string Name, object? Holder)>? Declared;
+
+        public override string TypeName => Type.Name;
+        public override IReadOnlyList<string> FieldNames => Members.Where(o => Scope.Variables.TryGetValue(o , out object? holder) && holder is VariableInterface).ToArray();
+        public override bool TryGetField(string name , out object? value)
+        {
+            if (Members.Contains(name) && Scope.Variables.TryGetValue(name , out object? holder) && holder is VariableInterface vi)
+            {
+                value = vi.Get();
+                return true;
+            }
+            value = null;
+            return false;
+        }
+
+        //같은 구조체(같은 struct 줄)이고 필드의 값이 모두 같다면 같은 값 (배열/리스트 필드는 원소끼리 비교)
+        public override bool Equals(object? obj)
+        {
+            if (obj is not StructInstance other || !Type.SameDefinition(other.Type))
+                return false;
+            if (ReferenceEquals(this , other))
+                return true;
+            IReadOnlyList<string> fields = FieldNames;
+            if (!fields.SequenceEqual(other.FieldNames))
+                return false;
+            foreach (string field in fields)
+            {
+                TryGetField(field , out object? a);
+                other.TryGetField(field , out object? b);
+                if (!same(a , b))
+                    return false;
+            }
+            return true;
+        }
+        static bool same(object? a , object? b)
+        {
+            if (a is IList x && b is IList y && a is not string && b is not string)
+            {
+                if (ReferenceEquals(x , y))
+                    return true;
+                if (x.Count != y.Count)
+                    return false;
+                for (int i = 0 ; i < x.Count ; i++)
+                {
+                    if (!same(x[i] , y[i]))
+                        return false;
+                }
+                return true;
+            }
+            return Values.Same(a , b);
+        }
+        public override int GetHashCode() => Type.Line;
+    }
+
+    //구조체를 호출: 새 영역에서 생성자(struct와 endstruct 사이)를 실행하고 구조체 값을 만듦
+    object? construct(JyunoStructType type , object?[] args)
+    {
+        Scope scope = new(type.Scope);
+        StructInstance instance = new(type , scope);
+        //생성자의 return은 생성자를 끝내기만 함 (반환한 값은 무시)
+        call_function(type.Line , type.End , scope , args);
+        instance.Members = scope.Variables.Keys.Where(o => scope.Aliases is null || !scope.Aliases.ContainsKey(o)).ToArray();
+        return instance;
+    }
+
+    //변수에서 값을 읽음: 구조체 값이라면 복사본 (읽은 값을 바꿔도 변수의 구조체 값은 바뀌지 않음)
+    object? read(object? value) => value is StructInstance instance ? copy_struct(instance , null) : value;
+
+    //지금 영역에 변수를 새로 만듦 (구조체 값이라면 복사해서 넣고 멤버 이름을 선언)
+    void declare_variable(string name , object? value)
+    {
+        if (value is not StructInstance instance)
+        {
+            substitute_variable(name , new JyunoVariable(value));
+            return;
+        }
+        StructInstance copy = copy_struct(instance , null);
+        substitute_variable(name , new JyunoVariable(copy));
+        bind(current , name , copy);
+        refresh_owner(current);
+    }
+
+    //이미 있는 변수(holder)에 값을 넣음
+    void assign(VariableInterface holder , string name , object? value)
+    {
+        //구조체 값과 관계없는 대입 (대부분)
+        if (value is not StructInstance && !(holder is JyunoVariable && holder.Get() is StructInstance))
+        {
+            holder.Set(value);
+            return;
+        }
+        object? old = holder is JyunoVariable ? holder.Get() : null;
+        StructInstance? copy = value is StructInstance instance ? copy_struct(instance , null) : null;
+        //상수라면 여기서 오류가 나며, 아무것도 바뀌지 않음
+        holder.Set(copy ?? value);
+        //변수가 있는 영역 (프로그램이 제공하는 변수라면 멤버 이름을 선언하지 않음)
+        if (!locate(name , holder , out Scope? scope , out string key))
+            return;
+        if (old is StructInstance previous)
+            unbind(previous);
+        if (copy is not null)
+            bind(scope , key , copy);
+        refresh_owner(scope);
+    }
+
+    //이름이 가리키는 변수(holder)가 실제로 있는 영역과 이름을 찾음 (멤버 이름이라면 구조체 값의 영역과 필드 이름)
+    bool locate(string name , object holder , [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Scope? scope , out string key)
+    {
+        key = name;
+        for (scope = current ; scope is not null ; scope = scope.Parent)
+        {
+            if (scope.Variables.TryGetValue(name , out object? found) && ReferenceEquals(found , holder))
+            {
+                while (scope.Aliases is not null && scope.Aliases.TryGetValue(key , out var alias))
+                {
+                    scope = alias.Instance.Scope;
+                    key = alias.Name;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    //구조체 값(instance)을 담은 변수(scope 영역의 name)의 멤버 이름을 선언
+    void bind(Scope scope , string name , StructInstance instance)
+    {
+        List<(string, object?)> declared = new();
+        scope.Aliases ??= new();
+        //구조체 값 안의 구조체 값의 멤버 이름(필드.필드)도 함께 선언됨
+        foreach (var (member , holder) in instance.Scope.Variables.ToArray())
+        {
+            string alias = name + "." + member;
+            //이미 같은 이름이 있다면 덮어씀
+            if (scope.Variables.TryGetValue(alias , out object? existing))
+                forget(scope , alias , existing);
+            scope.Variables[alias] = holder;
+            scope.Aliases[alias] = (instance , member);
+            declared.Add((alias , holder));
+        }
+        instance.OwnerScope = scope;
+        instance.OwnerName = name;
+        instance.Declared = declared;
+        scope_changed(scope);
+    }
+
+    //bind로 선언한 멤버 이름을 지움 (그 뒤에 다른 것으로 덮어쓴 이름은 그대로 둠)
+    void unbind(StructInstance instance)
+    {
+        if (instance.OwnerScope is not Scope scope)
+            return;
+        foreach (var (alias , holder) in instance.Declared!)
+        {
+            if (scope.Variables.TryGetValue(alias , out object? now) && ReferenceEquals(now , holder))
+                scope.Variables.Remove(alias);
+            if (scope.Aliases is not null && scope.Aliases.TryGetValue(alias , out var target) && target.Instance == instance)
+                scope.Aliases.Remove(alias);
+        }
+        instance.OwnerScope = null;
+        instance.OwnerName = null;
+        instance.Declared = null;
+        scope_changed(scope);
+    }
+
+    //scope 영역의 이름(name)이 holder 대신 다른 것으로 바뀌거나 지워짐
+    void forget(Scope scope , string name , object? holder)
+    {
+        scope.Aliases?.Remove(name);
+        if (holder is JyunoVariable variable && variable.Get() is StructInstance instance && instance.OwnerScope == scope && instance.OwnerName == name)
+            unbind(instance);
+    }
+
+    //구조체 값의 영역에서 멤버 이름이 바뀌었다면, 그 구조체 값을 담은 변수의 멤버 이름도 다시 선언 (바깥으로 계속)
+    void refresh_owner(Scope scope)
+    {
+        while (scope.Instance is StructInstance instance && instance.OwnerScope is Scope owner)
+        {
+            string name = instance.OwnerName!;
+            unbind(instance);
+            bind(owner , name , instance);
+            scope = owner;
+        }
+    }
+
+    //구조체 값의 깊은 복사: 필드의 값(구조체 값, 배열, 리스트 포함)을 모두 복사하고, 구조체 함수는 새 구조체 값의 함수로 만듦
+    StructInstance copy_struct(StructInstance source , Dictionary<object , object>? copied)
+    {
+        Scope scope = new(source.Scope.Parent);
+        StructInstance copy = new(source.Type , scope) { Members = source.Members };
+        foreach (string member in source.Members)
+        {
+            if (!source.Scope.Variables.TryGetValue(member , out object? holder))
+                continue;
+            scope.Variables[member] = holder switch {
+                JyunoFunction function when function.Scope == source.Scope => function.Rebind(scope),
+                JyunoStructType type when type.Scope == source.Scope => type.Rebind(scope),
+                JyunoConstantVariable constant => new JyunoConstantVariable(copy_value(constant.Get() , ref copied)),
+                JyunoVariable variable => new JyunoVariable(copy_value(variable.Get() , ref copied)),
+                _ => holder
+            };
+        }
+        foreach (string member in source.Members)
+        {
+            if (scope.Variables.TryGetValue(member , out object? holder) && holder is JyunoVariable variable && variable.Get() is StructInstance inner)
+                bind(scope , member , inner);
+        }
+        return copy;
+    }
+
+    //구조체 필드의 값을 깊은 복사 (같은 배열/리스트를 여러번 담고 있다면 복사본도 같은 복사본을 담음)
+    object? copy_value(object? value , ref Dictionary<object , object>? copied)
+    {
+        switch (value)
+        {
+            case StructInstance instance:
+                return copy_struct(instance , copied);
+            case Array array when array.Rank is 1:
+            {
+                copied ??= new(ReferenceEqualityComparer.Instance);
+                if (copied.TryGetValue(array , out object? done))
+                    return done;
+                Array clone = (Array)array.Clone();
+                copied[array] = clone;
+                if (needs_copy(array.GetType().GetElementType()!))
+                {
+                    for (int i = 0 ; i < clone.Length ; i++)
+                        clone.SetValue(copy_value(array.GetValue(i) , ref copied) , i);
+                }
+                return clone;
+            }
+            case IList list when list.GetType() is { IsGenericType: true } type && type.GetGenericTypeDefinition() == typeof(List<>):
+            {
+                copied ??= new(ReferenceEqualityComparer.Instance);
+                if (copied.TryGetValue(list , out object? done))
+                    return done;
+                IList clone = (IList)Activator.CreateInstance(type , list.Count)!;
+                copied[list] = clone;
+                bool deep = needs_copy(type.GetGenericArguments()[0]);
+                foreach (object? item in list)
+                    clone.Add(deep ? copy_value(item , ref copied) : item);
+                return clone;
+            }
+            //그 외의 값(숫자, 문자열 등)은 바꿀수 없으므로 그대로 (프로그램이 제공한 다른 컬렉션도 그대로)
+            default:
+                return value;
+        }
+    }
+    //원소 타입이 구조체 값이나 컬렉션을 담을수 있는지 (long, string 등은 복사할 필요 없음)
+    static bool needs_copy(Type element) => !(element.IsValueType || element == typeof(string));
+}

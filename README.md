@@ -19,7 +19,7 @@ ironpython을 사용한 python 모듈을 실행하거나, C#/F# 모듈을 직접
 
 ## 단점
 - 느린 편입니다. (1.3.1부터 크게 빨라졌지만, 단순 반복문에서 아직 파이썬보다 약 2~4배 느립니다.)
-- 클래스 및 구조체가 없습니다. (대신 배열/리스트는 지원합니다.)
+- 클래스가 없습니다. (대신 구조체(1.5.0부터)와 배열/리스트는 지원합니다.)
 
 ## 언어
 [Jyuno Language](/Language/README.md) 를 참고하세요.
@@ -78,7 +78,7 @@ foreach (Statement statement in analysis.Root!.Statements)  // 구문 트리
 |---|---|
 | ``ScriptAnalysis.Analyze(lines)`` | 토큰, 블록 구조, 구문 트리(``Root``), 변수 영역(``TopScope``, ``Scopes``), 함수 목록, goto 대상 |
 | ``Statement`` / ``Expression`` | 문장(``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement`` 등)과 식(``CallExpression``, ``AssignExpression``, ``RemoveExpression`` 등). 줄을 컴파일하는 규칙과 같게 나눕니다. |
-| ``Scope`` | 영역(최상위, 함수 호출 한번, for 반복 한번)마다 만들어질수 있는 이름과 종류(변수/함수/상수) |
+| ``Scope`` | 영역(최상위, 함수 호출 한번, for 반복 한번, 구조체 값 하나)마다 만들어질수 있는 이름과 종류(변수/함수/상수/구조체) |
 | ``GotoStatement.Targets`` | goto가 같은 블록이나 바깥 블록으로 이동할 때의 실행 위치 |
 | ``ScriptAnalysis.CheckNativeJs(globals)`` | JavaScript로 변환할때(Native JS) 필요한 제약 검사 |
 | ``Runtime.GetGlobals()`` | 런타임의 전역 이름(필수 명령어, 콘솔/수학 명령어, 프로그램이 추가한 함수/변수)과 종류 |
@@ -89,6 +89,11 @@ Native JS(Jyuno 코드를 JavaScript로 변환해서 실행)는 다음을 지켜
 2. 내장 함수와 전역 함수/상수(``add``, ``mul``, ``console.writeline``, ``math.pi``, ``true`` 등)를 다시 정의하거나(``func``, ``local``, ``param``, ``for``, 레이블, 상수) 대입할수 없습니다.
 3. ``goto``로 블록(``if``, ``while``, ``repeat``, ``for``) 안쪽으로 들어갈수 없습니다. (같은 블록이나 바깥 블록의 줄로는 이동할수 있으며, 계산한 대상은 실행할때 검사합니다)
 4. 블록 구조 오류(``end`` 누락 등)는 그 줄에 도달하기 전에, 실행하기 전에 보고합니다.
+5. 구조체(``struct``, 1.5.0부터)는 아직 쓸수 없습니다.
+
+### 구조체 값 (StructValue, 1.5.0부터)
+스크립트가 반환하거나 C# 함수의 인자로 넘긴 구조체 값은 ``Jyuno.Language.StructValue``입니다. ``TypeName``(구조체 이름), ``FieldNames``(필드 이름), ``value["필드"]`` 또는 ``TryGetField``로 필드를 읽을수 있습니다.  
+C#에 넘어간 값은 스크립트 변수의 구조체 값과 따로 복사된 값입니다.
 
 ## 테스트
 ```
