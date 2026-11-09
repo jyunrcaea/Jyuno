@@ -363,4 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # VS
-Jyuno.sln
+Jyuno.slnJyuno.Bench/AotGen/Gen/
+Jyuno.Bench/AotGen/bin/
+Jyuno.Bench/AotGen/obj/

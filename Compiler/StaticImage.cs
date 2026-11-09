@@ -53,7 +53,30 @@ public static class JyunoProgramImage
 
     #region 연결 (호스트 권한 대조)
 
+    /// <summary>[실험] 검증하고 호스트와 연결해서 가져오기 표의 값을 돌려줍니다. (C#으로 내보낸 프로그램이 실행 전에 부름)</summary>
+    public static object?[] BindImports(ReadOnlySpan<byte> data , Runtime host) => Bind(Read(data) , host);
+
+    /// <summary>[실험] 제한 모드로 빌드한 프로그램을 C# 소스로 내보냅니다. (타입 추론을 할수 없는 프로그램이라면 null, 이유는 reason)</summary>
+    public static string? EmitCSharp(IReadOnlyList<string> lines , Runtime profile , string ns , string class_name , out string? reason)
+    {
+        byte[] image = Build(lines , profile);
+        return Interpreter.StaticJit.TryEmitCSharp(Read(image) , image , ns , class_name , out reason);
+    }
+
     internal static JyunoProgram Link(IrProgram program , Runtime host , JyunoEngine engine = JyunoEngine.Closure)
+    {
+        object?[] bound = Bind(program , host);
+        if (engine is not JyunoEngine.Closure)
+        {
+            Func<object?>? jit = Interpreter.StaticJit.TryCompile(program , bound , engine is JyunoEngine.ExpressionInterpreter , out string? reason);
+            if (jit is not null)
+                return new JyunoProgram(jit) { Engine = engine.ToString() };
+            return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure (" + reason + ")" };
+        }
+        return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure" };
+    }
+
+    static object?[] Bind(IrProgram program , Runtime host)
     {
         List<string> errors = new();
         object?[] bound = new object?[program.Imports.Length];
@@ -101,14 +124,7 @@ public static class JyunoProgramImage
         }
         if (errors.Count > 0)
             throw new JyunoLinkException(errors);
-        if (engine is not JyunoEngine.Closure)
-        {
-            Func<object?>? jit = Interpreter.StaticJit.TryCompile(program , bound , engine is JyunoEngine.ExpressionInterpreter , out string? reason);
-            if (jit is not null)
-                return new JyunoProgram(jit) { Engine = engine.ToString() };
-            return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure (" + reason + ")" };
-        }
-        return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure" };
+        return bound;
     }
 
     static string kind_name(GlobalKind kind) => kind switch {

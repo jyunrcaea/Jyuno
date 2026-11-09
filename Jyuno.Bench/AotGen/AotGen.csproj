@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- [프로토타입] C#으로 내보낸 제한 모드 프로그램 실행/측정
+       1. dotnet Jyuno.Bench.dll emitcs <이 폴더> bench <벤치 폴더>   (Gen/*.cs 생성)
+       2. dotnet build -c Release  또는  dotnet publish -c Release -r linux-x64 -p:GenAot=true -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Optimize>true</Optimize>
+    <RunAnalyzers>false</RunAnalyzers>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <PublishAot Condition="'$(GenAot)' == 'true'">true</PublishAot>
+    <NoWarn>$(NoWarn);IL2026;IL3050;IL2104;IL3053</NoWarn>
+    <JyunoWeb Condition="'$(JyunoWeb)' == ''">../../../JyunoWeb</JyunoWeb>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Jyuno.csproj" />
+    <Compile Include="$(JyunoWeb)/Engine/JyunoHost.cs" />
+    <Compile Include="$(JyunoWeb)/Engine/Problem.cs" />
+    <Compile Include="$(JyunoWeb)/Engine/Problems.cs" />
+    <Compile Include="$(JyunoWeb)/Engine/VerdictInfo.cs" />
+  </ItemGroup>
+</Project>

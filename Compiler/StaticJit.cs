@@ -17,7 +17,7 @@ namespace Jyuno;
 //지원하지 않는 IR(goto, 레이블, const, local, 후보가 여러 개인 이름 등)이 있으면 null을 돌려주고 클로저 엔진을 사용
 public partial class Interpreter
 {
-    internal sealed class StaticJit
+    internal sealed partial class StaticJit
     {
         enum Ty : byte { Bottom, Long, Double, Bool, String, Object }
         static Ty join(Ty a , Ty b) => a == Ty.Bottom ? b : b == Ty.Bottom ? a : a == b ? a : Ty.Object;
@@ -40,6 +40,7 @@ public partial class Interpreter
             public Function? Func;
             public Ty Type;
             public ParameterExpression? Var, Defined, Const; //Const: const로 정의되었는지 (실행 중)
+            public int Id; //C# 생성: 변수 이름 번호
         }
         sealed class Frame
         {
@@ -58,6 +59,7 @@ public partial class Interpreter
             public ParameterExpression[] Parameters = Array.Empty<ParameterExpression>();
             public LabelTarget? Return;
             public Type? DelegateType;
+            public int Id; //C# 생성
         }
 
         sealed class Counter { public int Depth; }
@@ -77,6 +79,8 @@ public partial class Interpreter
         Function? current;
         bool changed;
         static readonly object RootKey = new();
+        //C# 생성(AOT): 호스트 객체 없이 가져오기 표만 보고 만듦 (실행할 때 연결 검사가 같은 가정을 확인)
+        bool aot;
 
         /// <summary>컴파일할수 없는 프로그램이라면 null (이유는 reason)</summary>
         public static Func<object?>? TryCompile(IrProgram program , object?[] imports , bool interpret , out string? reason)
@@ -257,7 +261,7 @@ public partial class Interpreter
                 case IrConstDef:
                 case IrLabel:
                     return false;
-                case IrCall call when call.Name.Candidates.Length is 0 && call.Name.Import >= 0 && imports[call.Name.Import] is NativeFunction { IsJyunoBuiltin: true }:
+                case IrCall call when !aot && call.Name.Candidates.Length is 0 && call.Name.Import >= 0 && imports[call.Name.Import] is NativeFunction { IsJyunoBuiltin: true }:
                     return false;
                 case IrParen paren:
                     return paren.Closed && needs_check(paren.Inner , inferring);
@@ -368,7 +372,7 @@ public partial class Interpreter
                     //아직 타입을 모르는 값이 있으면 결과도 아직 모름 (고정점 반복에서 정해짐, 처음부터 object로 넓히지 않음)
                     if (ts.Contains(Ty.Bottom))
                         return Ty.Bottom;
-                    return intrinsic_type(((NativeFunction)imports[intrinsic.Import]!).Intrinsic , ts);
+                    return intrinsic_type(program.Imports[intrinsic.Import].Intrinsic , ts);
                 }
                 case IrCall call:
                 {
@@ -486,7 +490,8 @@ public partial class Interpreter
         readonly Dictionary<IrStmt , LabelTarget> breaks = new(ReferenceEqualityComparer.Instance);
         LabelTarget top_return = null!;
 
-        Func<object?> compile(bool interpret)
+        //분류와 타입 추론: IL 생성과 C# 생성이 같이 쓴다
+        Frame analyze()
         {
             Frame root = frame_of(RootKey , program.TopFrameSize , null);
             stack.Add(root);
@@ -506,8 +511,13 @@ public partial class Interpreter
                 infer_block(program.Root);
                 if (++rounds > 100) throw new Unsupported("타입 추론이 끝나지 않음");
             } while (changed);
-
             stack.Clear();
+            return root;
+        }
+
+        Func<object?> compile(bool interpret)
+        {
+            Frame root = analyze();
             top_return = E.Label(typeof(object) , "return");
             ParameterExpression error = E.Parameter(typeof(GrammarErrorException) , "e");
             E body = E.Block(
@@ -1047,28 +1057,28 @@ public partial class Interpreter
 
         //─────────── 실행 중 도우미 (클로저 엔진과 같은 동작) ───────────
 
-        static object? intrinsic1(NativeFunction callee , object? x)
+        internal static object? intrinsic1(NativeFunction callee , object? x)
         {
             object r = fast1(callee.Intrinsic , x);
             return r != Miss ? r : callee.Execute(new[] { x });
         }
-        static object? intrinsic2(NativeFunction callee , object? x , object? y)
+        internal static object? intrinsic2(NativeFunction callee , object? x , object? y)
         {
             object r = fast2(callee.Intrinsic , x , y);
             return r != Miss ? r : callee.Execute(new[] { x , y });
         }
-        static object? intrinsic3(NativeFunction callee , object? x , object? y , object? z)
+        internal static object? intrinsic3(NativeFunction callee , object? x , object? y , object? z)
         {
             object r = fast3(callee.Intrinsic , x , y , z);
             return r != Miss ? r : callee.Execute(new[] { x , y , z });
         }
-        static long div_ll(NativeFunction callee , long a , long b) => b != 0 && !(a == long.MinValue && b == -1) ? a / b : (long)callee.Execute(new object?[] { a , b })!;
-        static long mod_ll(NativeFunction callee , long a , long b) => b != 0 && !(a == long.MinValue && b == -1) ? a % b : (long)callee.Execute(new object?[] { a , b })!;
-        static double div_dl(NativeFunction callee , double a , long b) => b != 0 ? a / b : (double)callee.Execute(new object?[] { a , b })!;
-        static double mod_dl(NativeFunction callee , double a , long b) => b != 0 ? a % b : (double)callee.Execute(new object?[] { a , b })!;
-        static bool truth(object? value) => value is bool b ? b : Parser.IsTrue(value);
-        static object box_bool(bool value) => box(value);
-        static object? list_call(System.Collections.IList collection , object?[] index)
+        internal static long div_ll(NativeFunction callee , long a , long b) => b != 0 && !(a == long.MinValue && b == -1) ? a / b : (long)callee.Execute(new object?[] { a , b })!;
+        internal static long mod_ll(NativeFunction callee , long a , long b) => b != 0 && !(a == long.MinValue && b == -1) ? a % b : (long)callee.Execute(new object?[] { a , b })!;
+        internal static double div_dl(NativeFunction callee , double a , long b) => b != 0 ? a / b : (double)callee.Execute(new object?[] { a , b })!;
+        internal static double mod_dl(NativeFunction callee , double a , long b) => b != 0 ? a % b : (double)callee.Execute(new object?[] { a , b })!;
+        internal static bool truth(object? value) => value is bool b ? b : Parser.IsTrue(value);
+        internal static object box_bool(bool value) => box(value);
+        internal static object? list_call(System.Collections.IList collection , object?[] index)
         {
             switch (index.Length)
             {
@@ -1078,25 +1088,25 @@ public partial class Interpreter
                 default: throw new JyunoException("배열/리스트는 '(이름) (인덱스)' 또는 '(이름) (인덱스) (값)' 형식으로만 쓸수 있습니다.");
             }
         }
-        static object? paren_check(object? value) => value is EarlyEnd ? throw parenthesis_error() : value;
-        static bool is_early(object? value) => value is EarlyEnd;
-        static object? early_value(object? value) => ((EarlyEnd)value!).Value;
-        static object new_early() => new EarlyEnd(null);
-        static object early_of(object? value) => new EarlyEnd(value);
-        static ReturnInfo? statement_check(object? value)
+        internal static object? paren_check(object? value) => value is EarlyEnd ? throw parenthesis_error() : value;
+        internal static bool is_early(object? value) => value is EarlyEnd;
+        internal static object? early_value(object? value) => ((EarlyEnd)value!).Value;
+        internal static object new_early() => new EarlyEnd(null);
+        internal static object early_of(object? value) => new EarlyEnd(value);
+        internal static ReturnInfo? statement_check(object? value)
         {
             if (value is ReturnInfo ri) return ri;
             if (value is GrammarError error) throw new GrammarErrorException(error);
             return null;
         }
-        static object? return_value(ReturnInfo ri) => ri.value;
-        static long repeat_count(object? value) => Values.TryGetInteger(value , out long n) && n > 0 ? n : 0;
-        static object?[] for_items(object? value) => value switch {
+        internal static object? return_value(ReturnInfo ri) => ri.value;
+        internal static long repeat_count(object? value) => Values.TryGetInteger(value , out long n) && n > 0 ? n : 0;
+        internal static object?[] for_items(object? value) => value switch {
             string text => text.Select(c => (object?)c.ToString()).ToArray(),
             System.Collections.IList collection => collection.Cast<object?>().ToArray(),
             _ => throw new JyunoException($"'{value ?? "null"}'은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)")
         };
-        static object? set_global(object? holder , string name , object? value)
+        internal static object? set_global(object? holder , string name , object? value)
         {
             EarlyEnd? early = null;
             if (value is EarlyEnd e)

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Remove="Ceiling/**" />
+    <Compile Remove="AotGen/**" />
     <ProjectReference Include="..\Jyuno.csproj" />
     <Compile Include="$(JyunoWeb)/Engine/JyunoHost.cs" />
     <Compile Include="$(JyunoWeb)/Engine/Problem.cs" />

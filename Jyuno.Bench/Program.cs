@@ -12,6 +12,8 @@ using System.Text.Json;
 //  speed <폴더> [반복]             벤치마크 (컴파일 포함, 새 런타임마다)
 //  build <소스> <출력>             바이너리 만들기 (JyunoWeb 채점 호스트 기준)
 //  cold-source <소스> / cold-image <바이너리> / cold-static <소스>   새 프로세스 한번 실행 (단계별 시간을 stderr로)
+//  emitcs <출력 폴더> bench <폴더> | fuzz <jsonl> <개수>   C# 소스로 내보내기 (AotGen 프로젝트에서 빌드)
+//  interp-dump <jsonl> <개수> <출력>   인터프리터 결과만 기록 (AOT 빌드와 비교용)
 //  phases-build <소스>   빌드 단계별 시간 (분석 / 제한 모드 검사 / 전체)
 static class Program
 {
@@ -294,12 +296,83 @@ static class Program
                 mark("read");
                 Runtime runtime = Host(Console.In.ReadToEnd() , out Sink sink);
                 mark("runtime");
-                JyunoProgram program = JyunoProgramImage.Load(bytes , runtime);
+                JyunoProgram program = JyunoProgramImage.Load(bytes , runtime , engine);
                 mark("load");
                 program.Run();
                 mark("run");
                 Console.Write(sink.Buffer);
                 break;
+            }
+            case "emitcs":
+            {
+                //emitcs <출력 폴더> bench <폴더>  |  emitcs <출력 폴더> fuzz <programs.jsonl> <개수>
+                //제한 모드 프로그램을 C# 소스로 내보내고 (Gen/*.cs + Registry.cs), fuzz는 인터프리터 결과도 expected.jsonl로
+                string dir = args[1];
+                Directory.CreateDirectory(Path.Combine(dir , "Gen"));
+                foreach (string old in Directory.GetFiles(Path.Combine(dir , "Gen") , "*.cs")) File.Delete(old);
+                List<(string Name, string[] Lines)> sources = new();
+                bool fuzz = args[2] == "fuzz";
+                if (fuzz)
+                {
+                    int count = int.Parse(args[4]) , index = 0;
+                    foreach (string json in File.ReadLines(args[3]))
+                    {
+                        if (sources.Count >= count) break;
+                        sources.Add(($"F{index++:D5}" , JsonSerializer.Deserialize<string>(json)!.Split('\n')));
+                    }
+                }
+                else
+                    foreach (string file in Directory.GetFiles(args[3] , "*.jyuno").OrderBy(o => o))
+                        sources.Add(("B_" + Path.GetFileNameWithoutExtension(file) , File.ReadAllText(file).Replace("\r\n" , "\n").TrimEnd('\n').Split('\n')));
+                List<string> registry = new();
+                using StreamWriter expected = new(Path.Combine(dir , "expected.jsonl"));
+                Dictionary<string , int> reasons = new();
+                long bytes = 0;
+                var sw = Stopwatch.StartNew();
+                foreach (var (name , lines) in sources)
+                {
+                    string? code , reason;
+                    try
+                    {
+                        code = JyunoProgramImage.EmitCSharp(lines , fuzz ? Host("" , out _) : new Runtime(Runtime.AddJyunoCommandType.Math) , "JyunoGen" , name , out reason);
+                    }
+                    catch (JyunoBuildException)
+                    {
+                        code = null;
+                        reason = "빌드 거부";
+                    }
+                    if (code is null)
+                    {
+                        reasons[reason!] = reasons.GetValueOrDefault(reason!) + 1;
+                        continue;
+                    }
+                    bytes += code.Length;
+                    File.WriteAllText(Path.Combine(dir , "Gen" , name + ".cs") , code);
+                    registry.Add($"        (\"{name}\" , h => new JyunoGen.{name}(h).Run),");
+                    if (fuzz)
+                    {
+                        Outcome o = Interpret(lines , "");
+                        expected.WriteLine(JsonSerializer.Serialize(new[] { name , o.Output , o.Result , o.Error ?? "" }));
+                    }
+                }
+                File.WriteAllText(Path.Combine(dir , "Gen" , "Registry.cs") ,
+                    "static class Registry\n{\n    public static readonly (string Name, System.Func<Jyuno.Runtime, System.Func<object>> Make)[] All =\n    {\n" + string.Join("\n" , registry) + "\n    };\n}\n");
+                Console.WriteLine($"C# {registry.Count}개 ({bytes / 1024.0:F0} KB, {sw.Elapsed.TotalMilliseconds:F0} ms), 못 만듦 {sources.Count - registry.Count}");
+                foreach (var (reason , n) in reasons.OrderByDescending(o => o.Value).Take(8))
+                    Console.WriteLine($"  {reason} {n}");
+                return 0;
+            }
+            case "interp-dump":
+            {
+                //interp-dump <programs.jsonl> <개수> <출력.jsonl>: 인터프리터 결과만 (AOT 빌드의 결과와 비교용)
+                int count = int.Parse(args[2]) , index = 0;
+                using StreamWriter output = new(args[3]);
+                foreach (string json in File.ReadLines(args[1]).Take(count))
+                {
+                    Outcome o = Interpret(JsonSerializer.Deserialize<string>(json)!.Split('\n') , "");
+                    output.WriteLine(JsonSerializer.Serialize(new[] { $"F{index++:D5}" , o.Output , o.Result , o.Error ?? "" }));
+                }
+                return 0;
             }
             case "noop":
                 return 0;
