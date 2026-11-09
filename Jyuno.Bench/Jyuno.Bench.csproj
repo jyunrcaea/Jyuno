@@ -14,6 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Ceiling/**" />
     <ProjectReference Include="..\Jyuno.csproj" />
     <Compile Include="$(JyunoWeb)/Engine/JyunoHost.cs" />
     <Compile Include="$(JyunoWeb)/Engine/Problem.cs" />
