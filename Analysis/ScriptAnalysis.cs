@@ -14,7 +14,7 @@ public sealed class ScriptAnalysis
     public int LineCount => Tokens.Count;
     /// <summary>블록 구조 오류 (if/end 짝 등). 있다면 Root는 null</summary>
     public IReadOnlyList<GrammarError> StructureErrors { get; }
-    /// <summary>각 줄이 속한 가장 안쪽 func 줄 (함수 밖이라면 -1)</summary>
+    /// <summary>각 줄이 속한 가장 안쪽 func/struct 줄 (함수 밖이라면 -1)</summary>
     public IReadOnlyList<int> Owners { get; }
     /// <summary>스크립트 최상위 블록 (블록 구조 오류가 있다면 null)</summary>
     public Block? Root { get; }
@@ -22,7 +22,7 @@ public sealed class ScriptAnalysis
     public Scope TopScope { get; }
     /// <summary>모든 영역 (Id 순서)</summary>
     public IReadOnlyList<Scope> Scopes => scopes;
-    /// <summary>모든 함수 (정의된 줄 순서)</summary>
+    /// <summary>모든 함수와 구조체 (정의된 줄 순서, 구조체는 IsStruct가 true)</summary>
     public IReadOnlyList<FunctionStatement> Functions => functions;
     /// <summary>최상위(함수 밖)의 goto</summary>
     public IReadOnlyList<GotoStatement> TopGotos => top_gotos;
@@ -257,8 +257,9 @@ public sealed class ScriptAnalysis
                     break;
                 }
                 case KeywordType.Func:
+                case KeywordType.Struct:
                 {
-                    FunctionStatement statement = new(line) { TokenError = error };
+                    FunctionStatement statement = new(line , keyword is KeywordType.Struct ? StatementKind.Struct : StatementKind.Func) { TokenError = error };
                     statement.Name = tokens.Length == 2 ? name_at(line , 1) : null;
                     statement.EndLine = map.Pair[line];
                     add(block , statement);
@@ -375,8 +376,8 @@ public sealed class ScriptAnalysis
                     break;
                 case FunctionStatement function:
                     if (function.Name is not null && function.TokenError is null)
-                        scope.Add(function.Name , NameKinds.Function);
-                    function.InnerScope = new_scope(ScopeKind.Function , scope , function);
+                        scope.Add(function.Name , function.IsStruct ? NameKinds.Struct : NameKinds.Function);
+                    function.InnerScope = new_scope(function.IsStruct ? ScopeKind.Struct : ScopeKind.Function , scope , function);
                     walk(function.Body , function.InnerScope);
                     break;
                 case ParameterStatement parameter:
@@ -552,6 +553,7 @@ public sealed class ScriptAnalysis
     /// 1. 변수/함수 삭제(이름 =)를 쓸수 없음
     /// 2. 내장 함수와 전역 함수/상수(add, mul, console.writeline, null 등)를 다시 정의하거나 대입할수 없음
     /// 3. goto로 블록(if/while/repeat/for) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
+    /// 4. 구조체(struct)를 쓸수 없음 (1.5.0부터, Native JS가 아직 지원하지 않음)
     /// </summary>
     /// <param name="globals">전역 이름 (Runtime.GetGlobals())</param>
     public IReadOnlyList<GrammarError> CheckNativeJs(IReadOnlyDictionary<string , GlobalName> globals)
@@ -601,6 +603,9 @@ public sealed class ScriptAnalysis
                     case ForStatement each:
                         define(each.Line , each.VariableName , "for 변수로 정의");
                         block(each.Body);
+                        break;
+                    case FunctionStatement { IsStruct: true } structure:
+                        errors.Add(new GrammarError(structure.Line , "Native JS 제약: 구조체(struct)를 쓸수 없습니다."));
                         break;
                     case FunctionStatement function:
                         define(function.Line , function.Name , "함수로 정의");

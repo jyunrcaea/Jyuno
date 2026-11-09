@@ -114,7 +114,9 @@ public enum StatementKind
     Goto,
     Break,
     Param,
-    Local
+    Local,
+    /// <summary>struct ~ endstruct (FunctionStatement, 1.5.0부터)</summary>
+    Struct
 }
 
 /// <summary>문장 (줄 하나, 또는 블록 하나)</summary>
@@ -193,14 +195,17 @@ public sealed class ForStatement : BlockStatement
     public Scope InnerScope { get; internal set; } = null!;
 }
 
+/// <summary>func ~ endfunc, 또는 struct ~ endstruct (Kind가 StatementKind.Struct, 본문은 생성자)</summary>
 public sealed class FunctionStatement : BlockStatement
 {
-    internal FunctionStatement(int line) : base(StatementKind.Func , line) { }
-    /// <summary>함수 이름 (형식이 잘못되었다면 null)</summary>
+    internal FunctionStatement(int line , StatementKind kind = StatementKind.Func) : base(kind , line) { }
+    /// <summary>struct로 만든 구조체인지</summary>
+    public bool IsStruct => Kind is StatementKind.Struct;
+    /// <summary>함수(또는 구조체) 이름 (형식이 잘못되었다면 null)</summary>
     public string? Name { get; internal set; }
     public int ParameterCount { get; internal set; }
     public Block Body { get; internal set; } = null!;
-    /// <summary>호출 한번마다 새로 만들어지는 영역</summary>
+    /// <summary>호출 한번마다 새로 만들어지는 영역 (구조체라면 구조체 값 하나의 영역)</summary>
     public Scope InnerScope { get; internal set; } = null!;
     /// <summary>이 함수 안(안쪽 함수 제외)의 goto</summary>
     public IReadOnlyList<GotoStatement> Gotos => gotos;

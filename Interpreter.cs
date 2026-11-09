@@ -35,6 +35,10 @@ public partial class Interpreter : IDisposable
         public long Version;
         //다른 영역에서 이름을 찾을때 이 영역을 거쳐간 적이 있는지 (그렇다면 이 영역이 바뀔때 모든 캐시를 무효화)
         public bool Shared;
+        //구조체 값 하나의 영역이라면 그 구조체 값 (필드와 구조체 함수가 이 영역에 있음)
+        public StructInstance? Instance;
+        //구조체 값을 담은 변수 때문에 선언된 멤버 이름(me.name 등) → 실제로 가리키는 구조체 값과 그 안의 이름
+        public Dictionary<string , (StructInstance Instance, string Name)>? Aliases;
     }
     //지금 실행중인 영역 (처음에는 스크립트 최상위 영역, for 문 안에서는 반복 한번의 영역)
     Scope current;
@@ -159,7 +163,11 @@ public partial class Interpreter : IDisposable
         //새로 만드는 변수는 항상 지금 영역에 둠 (전역 목록은 다른 인터프리터와 공유함)
         VariableDictionary dict = current.Variables;
         if (!dict.TryAdd(name , value))
+        {
+            //구조체 값을 담은 변수를 덮어쓴다면 그 멤버 이름도 지움
+            forget(current , name , dict[name]);
             dict[name] = value;
+        }
         scope_changed(current);
     }
     bool remove_variable(string name)
@@ -167,9 +175,12 @@ public partial class Interpreter : IDisposable
         //읽을 때와 같은 순서로 찾아서 삭제함 (호출한 다른 함수의 지역 변수는 삭제하지 않음)
         for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (scope.Variables.Remove(name))
+            if (scope.Variables.Remove(name , out object? holder))
             {
+                //구조체 값을 담은 변수라면 멤버 이름(이름.필드 등)도 함께 지움
+                forget(scope , name , holder);
                 scope_changed(scope);
+                refresh_owner(scope);
                 return true;
             }
         }
@@ -294,8 +305,7 @@ public partial class Interpreter : IDisposable
     void enter_for(ForState state)
     {
         current = new Scope(state.Outer);
-        current.Variables[state.Name] = new JyunoVariable(state.Items[state.Index]);
-        scope_changed(current);
+        declare_variable(state.Name , state.Items[state.Index]);
     }
     //for 문을 빠져나감 (for 문 바깥 영역으로 되돌림)
     void exit_for(int line)
@@ -453,6 +463,13 @@ public partial class Interpreter : IDisposable
                 substitute_variable((string)tokens[1].value , new JyunoFunction(this , line , map.Pair[line] , current));
                 jump(map.Pair[line] + 1);
                 break;
+            //구조체 정의: 이름에 구조체를 저장하고 endstruct 다음 줄로 건너뛰기 (Struct.cs)
+            case KeywordType.Struct:
+                if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
+                    throw new JyunoException("struct 다음에는 구조체 이름 하나만 와야 합니다.");
+                substitute_variable((string)tokens[1].value , new JyunoStructType(this , (string)tokens[1].value , line , map.Pair[line] , current));
+                jump(map.Pair[line] + 1);
+                break;
             //파라미터: 몇번째 param인지에 따라 인자를 받음 (인자가 부족하면 null)
             case KeywordType.Param:
                 if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
@@ -461,10 +478,11 @@ public partial class Interpreter : IDisposable
                     throw new JyunoException("param은 함수가 호출되었을 때만 사용할수 있습니다.");
                 object?[] args = frames.Peek().Args;
                 int index = map.ParamIndex[line];
-                substitute_variable((string)tokens[1].value , new JyunoVariable(index < args.Length ? args[index] : null));
+                declare_variable((string)tokens[1].value , index < args.Length ? args[index] : null);
                 break;
-            //함수의 끝 (함수 본문은 이 줄에 도달하면 끝남)
+            //함수/구조체의 끝 (본문은 이 줄에 도달하면 끝남)
             case KeywordType.EndFunc:
+            case KeywordType.EndStruct:
                 break;
         }
         return null;
@@ -491,12 +509,12 @@ public partial class Interpreter : IDisposable
         if (current.Variables.TryGetValue(name , out object? existing))
         {
             if (existing is VariableInterface vi)
-                vi.Set(value);
+                assign(vi , name , value);
             else
                 throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
             return;
         }
-        substitute_variable(name , new JyunoVariable(value));
+        declare_variable(name , value);
     }
 
     //함수 호출 정보 (인자, 반복 횟수)
@@ -522,23 +540,25 @@ public partial class Interpreter : IDisposable
             this.interpreter = interpreter;
             this.line = line;
             this.end = end;
-            this.scope = scope;
+            Scope = scope;
         }
         readonly Interpreter interpreter;
         readonly int line, end;
-        //함수를 만든 영역 (함수 본문에서 읽을수 있는 바깥 변수)
-        readonly Scope scope;
-        public object? Execute(params object?[] args) => interpreter.call_function(line , end , scope , args);
+        //함수를 만든 영역 (함수 본문에서 읽을수 있는 바깥 변수, 구조체 함수라면 구조체 값의 영역)
+        public readonly Scope Scope;
+        //같은 함수를 다른 영역에 만듦 (구조체 값을 복사할때 사용)
+        public JyunoFunction Rebind(Scope scope) => new(interpreter , line , end , scope);
+        public object? Execute(params object?[] args) => interpreter.call_function(line , end , new Scope(Scope) , args);
     }
-    object? call_function(int line , int end , Scope scope , object?[] args)
+    //함수/구조체 본문(line과 end 사이)을 body 영역에서 실행 (함수 안에서 만든 변수는 함수가 끝나면 사라짐)
+    object? call_function(int line , int end , Scope body , object?[] args)
     {
         if (frames.Count >= MaxCallDepth)
             throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         frames.Push(new CallFrame(args));
-        //함수 안에서 만든 변수는 함수가 끝나면 사라짐
-        current = new Scope(scope);
+        current = body;
         try
         {
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
@@ -571,11 +591,11 @@ public partial class Interpreter : IDisposable
     //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
     internal sealed class BlockMap
     {
-        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
+        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc, struct ↔ endstruct
         public readonly int[] Pair;
         //블록 구조가 잘못된 줄의 오류 메시지
         public readonly string?[] Errors;
-        //각 줄이 속한 가장 안쪽 func 줄 (함수 밖이라면 -1)
+        //각 줄이 속한 가장 안쪽 func/struct 줄 (함수 밖이라면 -1)
         public readonly int[] Owner;
         //param 줄이 함수의 몇번째 파라미터인지
         public readonly int[] ParamIndex;
@@ -598,12 +618,19 @@ public partial class Interpreter : IDisposable
                 Token[] tokens = lines[line];
                 return tokens.Length > 0 && tokens[0].type is TokenType.Keyword ? (KeywordType)tokens[0].value : null;
             }
+            //func와 struct는 본문을 따로 실행하는 블록 (goto/break로 넘나들수 없고, param의 순서를 따로 셈)
+            bool is_body(int line) => keyword_at(line) is KeywordType.Func or KeywordType.Struct;
             //닫히지 않은 블록 표시
             void unclosed(int line)
             {
                 if (keyword_at(line) is KeywordType.Func)
                 {
                     Errors[line] = "func 키워드는 endfunc 키워드로 종료 표시가 있어야 합니다.";
+                    return;
+                }
+                if (keyword_at(line) is KeywordType.Struct)
+                {
+                    Errors[line] = "struct 키워드는 endstruct 키워드로 종료 표시가 있어야 합니다.";
                     return;
                 }
                 Errors[line] = "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.";
@@ -614,11 +641,11 @@ public partial class Interpreter : IDisposable
 
             for (int line = 0 ; line < lines.Count ; line++)
             {
-                Owner[line] = opened.FirstOrDefault(o => keyword_at(o) is KeywordType.Func , -1);
+                Owner[line] = opened.FirstOrDefault(is_body , -1);
                 KeywordType? keyword = keyword_at(line);
                 if (keyword is null)
                     continue;
-                if (keyword is KeywordType.Func || Grammar.Conditionals.Contains(keyword.Value))
+                if (keyword is KeywordType.Func or KeywordType.Struct || Grammar.Conditionals.Contains(keyword.Value))
                 {
                     opened.Push(line);
                     continue;
@@ -633,8 +660,8 @@ public partial class Interpreter : IDisposable
                             Errors[line] = "else는 if와 end 사이에 한번만 쓸수 있습니다.";
                         break;
                     case KeywordType.End:
-                        //func는 end가 아닌 endfunc로 닫아야 함
-                        if (!opened.TryPeek(out int opener) || keyword_at(opener) is KeywordType.Func)
+                        //func/struct는 end가 아닌 endfunc/endstruct로 닫아야 함
+                        if (!opened.TryPeek(out int opener) || is_body(opener))
                         {
                             Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다.";
                             break;
@@ -648,10 +675,12 @@ public partial class Interpreter : IDisposable
                         Pair[line] = opener;
                         break;
                     case KeywordType.EndFunc:
+                    case KeywordType.EndStruct:
+                        bool is_func = keyword is KeywordType.EndFunc;
                         int func = Owner[line];
-                        if (func < 0)
+                        if (func < 0 || (keyword_at(func) is KeywordType.Func) != is_func)
                         {
-                            Errors[line] = "endfunc와 짝이 되는 func 키워드가 없습니다.";
+                            Errors[line] = is_func ? "endfunc와 짝이 되는 func 키워드가 없습니다." : "endstruct와 짝이 되는 struct 키워드가 없습니다.";
                             break;
                         }
                         //함수 안에서 닫히지 않은 블록
@@ -667,7 +696,7 @@ public partial class Interpreter : IDisposable
                         foreach (int o in opened)
                         {
                             KeywordType? kind = keyword_at(o);
-                            if (kind is KeywordType.Func)
+                            if (kind is KeywordType.Func or KeywordType.Struct)
                                 break;
                             if (kind is not KeywordType.If)
                             {
@@ -684,7 +713,7 @@ public partial class Interpreter : IDisposable
                         //함수의 몇번째 param인지 기록
                         if (Owner[line] < 0)
                         {
-                            Errors[line] = "param은 func와 endfunc 사이에서만 쓸수 있습니다.";
+                            Errors[line] = "param은 func와 endfunc(또는 struct와 endstruct) 사이에서만 쓸수 있습니다.";
                             break;
                         }
                         param_counts.TryGetValue(Owner[line] , out int index);
