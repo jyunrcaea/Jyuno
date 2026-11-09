@@ -13,10 +13,11 @@
     <PackageId>Jyuno</PackageId>
     <Version>1.5.0</Version>
     <Authors>jyunrcaea</Authors>
-    <Description>C# 프로그램에 안전한 플러그인(스크립트) 기능을 쉽게 추가하기 위한 작고 가벼운 언어 Jyuno의 인터프리터입니다.</Description>
+    <Description>Interpreter for Jyuno, a small and lightweight language for easily adding safe plugin (scripting) support to C# programs.</Description>
     <PackageTags>jyuno;script;scripting;interpreter;plugin;language</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- NuGet에 보이는 README는 영어판(README.nuget.md). README.md를 고치면 같이 고쳐 주세요 -->
+    <PackageReadmeFile>README.nuget.md</PackageReadmeFile>
     <PackageProjectUrl>https://github.com/jyunrcaea/Jyuno</PackageProjectUrl>
     <RepositoryUrl>https://github.com/jyunrcaea/Jyuno</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -25,7 +26,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Update="README.md" Pack="true" PackagePath="\" />
+    <None Update="README.nuget.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
