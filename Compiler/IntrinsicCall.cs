@@ -147,9 +147,24 @@ public partial class Interpreter
             this.callee = callee;
             op = callee.Intrinsic;
             arity = arguments.Length;
-            a = arguments[0].Eval;
-            b = arity > 1 ? arguments[1].Eval : null!;
-            c = arity > 2 ? arguments[2].Eval : null!;
+            //[실험] 탈출 분석: 결과가 bool/정수뿐이고 인자를 담거나 바꾸지 않는 내장 함수라면, 변수의 구조체 값을 복사하지 않고 넘김
+            bool borrows = op is Intrinsic.Equal or Intrinsic.Less or Intrinsic.Greater or Intrinsic.Not or Intrinsic.And or Intrinsic.Or;
+            //빌린 값은 뒤의 인자를 계산하는 동안 바뀌면 안 되므로, 뒤의 인자가 모두 상수나 변수 읽기일 때만
+            Func<object?> eval(int i)
+            {
+                Expr e = arguments[i];
+                if (!borrows || e.Borrow is null)
+                    return e.Eval;
+                for (int j = i + 1 ; j < arguments.Length ; j++)
+                {
+                    if (!arguments[j].IsConstant && arguments[j].Borrow is null)
+                        return e.Eval;
+                }
+                return e.Borrow;
+            }
+            a = eval(0);
+            b = arity > 1 ? eval(1) : null!;
+            c = arity > 2 ? eval(2) : null!;
         }
         readonly Interpreter owner;
         readonly NameSite site;
@@ -173,14 +188,14 @@ public partial class Interpreter
                 {
                     object? x = a();
                     object r = fast1(op , x);
-                    return r != Miss ? r : callee.Execute(new[] { x });
+                    return r != Miss ? r : owner.invoke_function(callee , new[] { x });
                 }
                 case 2:
                 {
                     object? x = a();
                     object? y = b();
                     object r = fast2(op , x , y);
-                    return r != Miss ? r : callee.Execute(new[] { x , y });
+                    return r != Miss ? r : owner.invoke_function(callee , new[] { x , y });
                 }
                 default:
                 {
@@ -188,7 +203,7 @@ public partial class Interpreter
                     object? y = b();
                     object? z = c();
                     object r = fast3(op , x , y , z);
-                    return r != Miss ? r : callee.Execute(new[] { x , y , z });
+                    return r != Miss ? r : owner.invoke_function(callee , new[] { x , y , z });
                 }
             }
         }
