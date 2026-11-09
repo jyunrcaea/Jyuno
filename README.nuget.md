@@ -89,7 +89,7 @@ Native JS (translating Jyuno code to JavaScript and running it) requires the fol
 2. Built-in functions and global functions/constants (``add``, ``mul``, ``console.writeline``, ``math.pi``, ``true``, etc.) cannot be redefined (``func``, ``local``, ``param``, ``for``, labels, constants) or assigned to.
 3. ``goto`` cannot jump into a block (``if``, ``while``, ``repeat``, ``for``). (It can jump to lines in the same block or an outer block; computed targets are checked at run time.)
 4. Block structure errors (a missing ``end``, etc.) are reported before running, before that line is reached.
-5. Structs (``struct``, since 1.5.0) can't be used yet.
+5. Structs (``struct``, supported by Native JS since 1.5.1) can't be defined inside another struct.
 
 ### Struct values (StructValue, since 1.5.0)
 A struct value returned by a script or passed as an argument to a C# function is a ``Jyuno.Language.StructValue``. You can read ``TypeName`` (the struct name), ``FieldNames`` (the field names), and fields with ``value["field"]`` or ``TryGetField``.  
