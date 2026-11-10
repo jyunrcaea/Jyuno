@@ -379,6 +379,10 @@ public class StructTests
         Assert.Equal(2, statement.ParameterCount);
         Assert.Equal(NameKinds.Struct, analysis.TopScope.Names["person"]);
         Assert.Equal(ScopeKind.Struct, statement.InnerScope.Kind);
-        Assert.Contains(analysis.CheckNativeJs(new Runtime().GetGlobals()), o => o.Line == 0);
+        //Native JS: 구조체는 변환할수 있지만, 구조체 안에서 구조체를 정의하는 것은 제약
+        Assert.Empty(analysis.CheckNativeJs(new Runtime().GetGlobals()));
+        ScriptAnalysis nested = ScriptAnalysis.Analyze(new[] { "struct outer", "  struct inner", "  endstruct", "endstruct" });
+        GrammarError error = Assert.Single(nested.CheckNativeJs(new Runtime().GetGlobals()));
+        Assert.Equal(1, error.Line);
     }
 }

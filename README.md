@@ -105,7 +105,7 @@ Native JS(Jyuno 코드를 JavaScript로 변환해서 실행)는 다음을 지켜
 2. 내장 함수와 전역 함수/상수(``add``, ``mul``, ``console.writeline``, ``math.pi``, ``true`` 등)를 다시 정의하거나(``func``, ``local``, ``param``, ``for``, 레이블, 상수) 대입할수 없습니다.
 3. ``goto``로 블록(``if``, ``while``, ``repeat``, ``for``) 안쪽으로 들어갈수 없습니다. (같은 블록이나 바깥 블록의 줄로는 이동할수 있으며, 계산한 대상은 실행할때 검사합니다)
 4. 블록 구조 오류(``end`` 누락 등)는 그 줄에 도달하기 전에, 실행하기 전에 보고합니다.
-5. 구조체(``struct``, 1.5.0부터)는 아직 쓸수 없습니다.
+5. 구조체(``struct``, 1.5.1부터 Native JS 지원) 안에서 다른 구조체를 정의할수 없습니다.
 
 ### 구조체 값 (StructValue, 1.5.0부터)
 스크립트가 반환하거나 C# 함수의 인자로 넘긴 구조체 값은 ``Jyuno.Language.StructValue``입니다. ``TypeName``(구조체 이름), ``FieldNames``(필드 이름), ``value["필드"]`` 또는 ``TryGetField``로 필드를 읽을수 있습니다.  
