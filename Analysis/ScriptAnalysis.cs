@@ -553,7 +553,7 @@ public sealed class ScriptAnalysis
     /// 1. 변수/함수 삭제(이름 =)를 쓸수 없음
     /// 2. 내장 함수와 전역 함수/상수(add, mul, console.writeline, null 등)를 다시 정의하거나 대입할수 없음
     /// 3. goto로 블록(if/while/repeat/for) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
-    /// 4. 구조체(struct)를 쓸수 없음 (1.5.0부터, Native JS가 아직 지원하지 않음)
+    /// 4. 구조체(struct) 생성자 안에서 구조체를 정의할수 없음
     /// </summary>
     /// <param name="globals">전역 이름 (Runtime.GetGlobals())</param>
     public IReadOnlyList<GrammarError> CheckNativeJs(IReadOnlyDictionary<string , GlobalName> globals)
@@ -604,8 +604,9 @@ public sealed class ScriptAnalysis
                         define(each.Line , each.VariableName , "for 변수로 정의");
                         block(each.Body);
                         break;
-                    case FunctionStatement { IsStruct: true } structure:
-                        errors.Add(new GrammarError(structure.Line , "Native JS 제약: 구조체(struct)를 쓸수 없습니다."));
+                    case FunctionStatement { IsStruct: true } structure when structure.InnerScope.Parent?.Kind is ScopeKind.Struct:
+                        //구조체 생성자 안에서 정의한 구조체는 구조체 값을 복사할때마다 새 구조체 값에 다시 묶어야 해서 지원하지 않음
+                        errors.Add(new GrammarError(structure.Line , "Native JS 제약: 구조체(struct) 안에서 구조체를 정의할수 없습니다."));
                         break;
                     case FunctionStatement function:
                         define(function.Line , function.Name , "함수로 정의");
