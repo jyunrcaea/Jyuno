@@ -272,8 +272,12 @@ public partial class Interpreter
         {
             if (has_arguments)
                 inline_rejected = true;
-            end = start + 1;
-            return slot_read(slot);
+            //함수 영역이 만들어진 뒤(materialize_inline)에는 원래대로 이름을 찾아서 실행
+            Dictionary<string , int>? parameters = inline_params;
+            inline_params = null;
+            Expr normal = compile_call(tokens , start , closed , out end);
+            inline_params = parameters;
+            return slot_read(slot , normal);
         }
         Expr[] arguments = compile_arguments(tokens , start + 1 , out end);
         Func<object?[]> evaluate_arguments = make_arguments(arguments);
@@ -323,7 +327,7 @@ public partial class Interpreter
         {
             return new Expr(() => {
                 object?[] args = inline_args;
-                if (member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? found))
+                if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? found))
                     return invoke(found);
                 if (!resolve(site , out object? holder))
                     throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
@@ -400,17 +404,12 @@ public partial class Interpreter
                 //이름: 변수의 값
                 case TokenType.Name:
                     string name = (string)token.value;
-                    if (inline_slot(name) is int slot)
-                    {
-                        arguments.Add(slot_read(slot));
-                        break;
-                    }
                     NameSite site = new(name);
                     if (inline_member(name) is (int member_slot, string member))
                     {
                         Func<object?> member_read(bool borrow) => () => {
                             object?[] args = inline_args;
-                            if (!(member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? holder)) && !resolve(site , out holder))
+                            if (!(inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? holder)) && !resolve(site , out holder))
                                 throw new JyunoException($"'{name}'은/는 알수없는 변수/함수 입니다.");
                             if (holder is VariableInterface vi)
                                 return borrow && EscapeAnalysis ? vi.Get() : read(vi.Get());
@@ -419,7 +418,7 @@ public partial class Interpreter
                         arguments.Add(new Expr(member_read(false)) { Borrow = member_read(true) });
                         break;
                     }
-                    arguments.Add(new Expr(() => {
+                    Expr variable = new Expr(() => {
                         if (!resolve(site , out object? holder))
                             throw new JyunoException($"'{name}'은/는 알수없는 변수/함수 입니다.");
                         if (holder is VariableInterface vi)
@@ -433,7 +432,9 @@ public partial class Interpreter
                                 return EscapeAnalysis ? vi.Get() : read(vi.Get());
                             throw new JyunoException($"'{name}'에서 값을 가져올수 없습니다.");
                         }
-                    });
+                    };
+                    //[실험] 인라이닝: 파라미터 이름은 영역 대신 인자를 바로 읽음
+                    arguments.Add(inline_slot(name) is int slot ? slot_read(slot , variable) : variable);
                     break;
                 case TokenType.Prefix:
                     if (token.value is '(')

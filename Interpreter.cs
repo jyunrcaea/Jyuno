@@ -18,9 +18,9 @@ public partial class Interpreter : IDisposable
     }
     public bool EnableRemoveVariable { get; set; } = true;
     public bool BlockSubstitute { get; set; } = false;
-    /// <summary>[실험] 탈출 분석: 방금 만들어진 구조체 값은 다시 복사하지 않고, 읽기만 하는 내장 함수에는 복사하지 않고 넘깁니다.</summary>
+    /// <summary>[실험, 1.5.2부터] 탈출 분석: 방금 만들어진 구조체 값은 다시 복사하지 않고, 읽기만 하는 내장 함수에는 복사하지 않고 넘깁니다. 실행 결과는 끈 것과 같습니다.</summary>
     public bool EscapeAnalysis { get; set; } = false;
-    /// <summary>[실험] 인라이닝: param과 return 한 줄로만 된 함수는 호출 정보(CallFrame)와 줄 단위 실행 없이 바로 계산합니다.</summary>
+    /// <summary>[실험, 1.5.2부터] 인라이닝: param 줄들과 return 한 줄로만 된 함수는 함수 영역과 호출 정보를 만들지 않고 바로 계산합니다. 실행 결과는 끈 것과 같습니다.</summary>
     public bool Inlining { get; set; } = false;
     public Runtime runtime { get; init; }
     public int CurrentExecuteLine { get; private set; } = -1;
@@ -216,6 +216,7 @@ public partial class Interpreter : IDisposable
         CurrentExecuteLine = line;
         try
         {
+            materialize_inline();
             object? result = execute_line(line , false);
             escape(result is ReturnInfo ri ? ri.value : result);
             return result;
@@ -479,7 +480,7 @@ public partial class Interpreter : IDisposable
             case KeywordType.Struct:
                 if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
                     throw new JyunoException("struct 다음에는 구조체 이름 하나만 와야 합니다.");
-                substitute_variable((string)tokens[1].value , new JyunoStructType(this , (string)tokens[1].value , line , map.Pair[line] , current));
+                substitute_variable((string)tokens[1].value , new JyunoStructType(this , (string)tokens[1].value , line , map.Pair[line] , current , map.HasInnerStruct[line]));
                 jump(map.Pair[line] + 1);
                 break;
             //파라미터: 몇번째 param인지에 따라 인자를 받음 (인자가 부족하면 null)
@@ -614,8 +615,10 @@ public partial class Interpreter : IDisposable
             throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
         int current_line = CurrentExecuteLine;
         Scope caller = current;
+        InlineShape? outer_frame = inline_frame;
         frames.Push(new CallFrame(args));
         current = body;
+        inline_frame = null;
         try
         {
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
@@ -631,6 +634,7 @@ public partial class Interpreter : IDisposable
         finally
         {
             current = caller;
+            inline_frame = outer_frame;
             frames.Pop();
             CurrentExecuteLine = current_line;
         }
@@ -655,32 +659,51 @@ public partial class Interpreter : IDisposable
     bool inline_rejected;
     //인라인된 호출의 인자 (호출마다 바꾸고 되돌림)
     object?[] inline_args = Array.Empty<object?>();
+    //지금 실행중인 곳이 영역을 만들지 않고 인라인된 호출의 return 식이라면 그 함수의 모양 (그 안에서 다른 함수를 호출하는 동안에는 null)
+    InlineShape? inline_frame;
     int? inline_slot(string name) => inline_params is not null && inline_params.TryGetValue(name , out int index) ? index : null;
-    //파라미터의 멤버 이름 (파라미터 이름 + "." + 멤버)
+    //파라미터의 멤버 이름 (파라미터 이름 + "." + 멤버, 파라미터 이름에는 '.'이 없음)
     (int Slot, string Member)? inline_member(string name)
     {
         if (inline_params is null)
             return null;
-        (int, string)? found = null;
-        int length = -1;
-        foreach (var (param , index) in inline_params)
-        {
-            if (param.Length > length && name.Length > param.Length + 1 && name[param.Length] == '.' && name.StartsWith(param , StringComparison.Ordinal))
-            {
-                found = (index , name[(param.Length + 1)..]);
-                length = param.Length;
-            }
-        }
-        return found;
+        int dot = name.IndexOf('.');
+        if (dot > 0 && dot < name.Length - 1 && inline_params.TryGetValue(name[..dot] , out int index))
+            return (index , name[(dot + 1)..]);
+        return null;
     }
-    Expr slot_read(int index)
+    //파라미터 읽기: 인라인된 호출이 진행중이라면 인자를 바로 읽고, 함수 영역이 만들어진 뒤라면 원래대로(normal) 이름을 찾음
+    Expr slot_read(int index , Expr normal)
     {
-        Func<object?> borrow = () => {
+        object? slot()
+        {
             object?[] args = inline_args;
             return index < args.Length ? args[index] : null;
-        };
+        }
+        Func<object?> normal_eval = normal.Eval;
         //변수를 읽을 때와 같이 구조체 값이라면 복사본
-        return new Expr(() => read(borrow())) { Borrow = () => EscapeAnalysis ? borrow() : read(borrow()) };
+        Func<object?> eval = () => inline_frame is not null ? read(slot()) : normal_eval();
+        if (normal.Borrow is not Func<object?> normal_borrow)
+            return new Expr(eval) { MayEndEarly = normal.MayEndEarly };
+        return new Expr(eval) { Borrow = () => inline_frame is null ? normal_borrow() : EscapeAnalysis ? slot() : read(slot()) };
+    }
+    //인라인된 호출(영역을 만들지 않은 호출)이 진행중일때 C# 함수가 ExecuteLine()을 호출했다면, 그 줄이 함수 영역에서 실행되도록 영역을 만듦
+    //(이 뒤로는 파라미터도 이 영역의 변수에서 읽음)
+    void materialize_inline()
+    {
+        if (inline_frame is not InlineShape shape)
+            return;
+        object?[] args = inline_args;
+        inline_frame = null;
+        current = new Scope(current);
+        foreach (var (_ , index , name) in shape.Params)
+        {
+            object? arg = index < args.Length ? args[index] : null;
+            //구조체 인자는 이미 이 호출의 것이므로 그대로 변수에 넣음
+            if (arg is StructInstance instance)
+                instance.Fresh = true;
+            declare_variable(name , arg);
+        }
     }
     //return 식을 파라미터를 인자로 바로 읽도록 컴파일 (대입/레이블/삭제/상수 선언이 있다면 함수 영역에 이름이 생기므로 인라인하지 않음)
     Func<object?>? compile_direct(InlineShape shape)
@@ -691,9 +714,14 @@ public partial class Interpreter : IDisposable
             if (token.type is TokenType.Prefix && token.value is '=' or ':')
                 return null;
         }
-        inline_params = new();
+        //파라미터 이름이 겹치거나 '.'이 있다면 구조체 파라미터의 멤버 이름과 서로 덮어쓸수 있으므로 인라인하지 않음
+        Dictionary<string , int> parameters = new();
         foreach (var (_ , index , name) in shape.Params)
-            inline_params[name] = index;
+        {
+            if (name.Contains('.') || !parameters.TryAdd(name , index))
+                return null;
+        }
+        inline_params = parameters;
         inline_rejected = false;
         try
         {
@@ -761,15 +789,6 @@ public partial class Interpreter : IDisposable
         return shape;
     }
 
-    static bool has_struct(object?[] args)
-    {
-        foreach (object? arg in args)
-        {
-            if (arg is StructInstance)
-                return true;
-        }
-        return false;
-    }
     //함수 본문을 줄 단위로 실행하지 않고 바로 계산 (영역, 인자, 실행 위치, 오류는 call_function과 같음)
     object? call_inline(JyunoFunction function , InlineShape shape , object?[] args)
     {
@@ -782,22 +801,28 @@ public partial class Interpreter : IDisposable
             shape.Direct = compile_direct(shape);
             shape.DirectCompiled = true;
         }
+        InlineShape? outer_frame = inline_frame;
         if (shape.Direct is Func<object?> direct)
         {
-            //구조체 인자는 param처럼 소유권을 가져오거나 복사함 (인라인된 본문의 구조체 함수가 필드를 바꿀수 있으므로)
-            if (has_struct(args))
+            //파라미터가 받는 구조체 인자는 param처럼 소유권을 가져오거나 복사함 (인라인된 본문의 구조체 함수가 필드를 바꿀수 있으므로)
+            int count = Math.Min(args.Length , shape.Params.Length);
+            for (int i = 0 ; i < count ; i++)
             {
+                if (args[i] is not StructInstance)
+                    continue;
                 args = (object?[])args.Clone();
-                for (int i = 0 ; i < args.Length ; i++)
+                for (int j = i ; j < count ; j++)
                 {
-                    if (args[i] is StructInstance instance)
-                        args[i] = take(instance);
+                    if (args[j] is StructInstance instance)
+                        args[j] = take(instance);
                 }
+                break;
             }
             object?[] outer_args = inline_args;
             //파라미터가 아닌 이름은 함수를 만든 영역에서 찾음 (함수 영역에는 파라미터만 있으므로 결과가 같음)
             current = function.Scope;
             inline_args = args;
+            inline_frame = shape;
             inline_depth++;
             try
             {
@@ -808,11 +833,13 @@ public partial class Interpreter : IDisposable
             {
                 current = caller;
                 inline_args = outer_args;
+                inline_frame = outer_frame;
                 inline_depth--;
                 CurrentExecuteLine = current_line;
             }
         }
         current = new Scope(function.Scope);
+        inline_frame = null;
         inline_depth++;
         try
         {
@@ -828,6 +855,7 @@ public partial class Interpreter : IDisposable
         finally
         {
             current = caller;
+            inline_frame = outer_frame;
             inline_depth--;
             CurrentExecuteLine = current_line;
         }
@@ -856,6 +884,8 @@ public partial class Interpreter : IDisposable
         public readonly int[] ParamIndex;
         //param 줄이 함수 호출 한번에 최대 한번만 실행되는지 (반복문 안이 아니고, 함수에 goto가 없음)
         public readonly bool[] ParamOnce;
+        //struct 줄: 그 구조체 안에(구조체 함수 안 포함) 다른 struct가 있는지
+        public readonly bool[] HasInnerStruct;
         public int Count => Pair.Length;
 
         public BlockMap(List<CommandLine> scripts) : this(scripts.Select(o => o.tokens).ToArray()) { }
@@ -867,6 +897,7 @@ public partial class Interpreter : IDisposable
             Owner = new int[lines.Count];
             ParamIndex = new int[lines.Count];
             ParamOnce = new bool[lines.Count];
+            HasInnerStruct = new bool[lines.Count];
             HashSet<int> has_goto = new();
             Array.Fill(Pair , -1);
             Stack<int> opened = new();
@@ -906,6 +937,14 @@ public partial class Interpreter : IDisposable
                     continue;
                 if (keyword is KeywordType.Func or KeywordType.Struct || Grammar.Conditionals.Contains(keyword.Value))
                 {
+                    if (keyword is KeywordType.Struct)
+                    {
+                        foreach (int o in opened)
+                        {
+                            if (keyword_at(o) is KeywordType.Struct)
+                                HasInnerStruct[o] = true;
+                        }
+                    }
                     opened.Push(line);
                     continue;
                 }

@@ -18,6 +18,9 @@ public class OptimizationTests
         interpreter.EscapeAnalysis = escape;
         interpreter.Inlining = inline;
         runtime.AddFunction("line" , args => (long)interpreter.CurrentExecuteLine);
+        //실행 도중에 ExecuteLine()을 다시 호출하는 C# 함수
+        runtime.AddFunction("eval" , args => interpreter.ExecuteLine((string)args[0]!));
+        runtime.AddFunction("nan" , args => double.NaN);
         string result;
         try
         {
@@ -147,5 +150,95 @@ public class OptimizationTests
         Assert.Equal("ok null\n3\nab\nnull" , Run(
             "func f" , "  param a" , "  param b" , "  return (add a b)" , "endfunc" ,
             "out (f 1 2 3)" , "out (f 'a' 'b')" , "out (f 1)"));
+    }
+
+    [Fact]
+    public void Equal_SameVariable_ComparesFieldsLikeCopies()
+    {
+        //같은 구조체 값끼리는 필드를 비교하지 않지만, 변수를 두번 읽으면 원래는 복사본끼리 비교함 (NaN은 자신과 같지 않음)
+        Assert.Equal("ok null\nFalse\nFalse\nTrue\nFalse\nTrue" , RunPt(
+            "a = pt (nan)" , "out (equal a a)" ,
+            "func self" , "  param q" , "  return (equal q q)" , "endfunc" , "out (self a)" ,
+            "l = list a" , "out (equal (l 0) (l 0))" , "out (equal a (l 0))" ,
+            "b = pt 1" , "out (equal b b)"));
+    }
+
+    [Fact]
+    public void Equal_StructsSharingList_ComparesElementsLikeCopies()
+    {
+        Assert.Equal("ok null\nFalse\nTrue\nTrue" , Run(
+            "struct bag" , "  l = list 0" , "  func setl" , "    param v" , "    l = v" , "  endfunc" , "endstruct" ,
+            "shared = list 1.5 (nan)" , "a = bag" , "b = bag" , "a.setl shared" , "b.setl shared" ,
+            "out (equal a b)" , "out (equal a.l b.l)" ,
+            "fine = list 1 2" , "a.setl fine" , "b.setl fine" , "out (equal a b)"));
+    }
+
+    [Fact]
+    public void BorrowedArgument_BeforeRedefinedBuiltin_IsCopied()
+    {
+        //(add 1 2)는 미리 계산하지만, add를 다시 정의했다면 스크립트의 함수가 실행되어 a를 바꿀수 있음
+        Assert.Equal("ok null\nTrue\npt { x = 99 }" , RunPt(
+            "a = pt 1" , "b = pt 1" , "func add" , "  a.x = 99" , "  return b" , "endfunc" ,
+            "out (equal a (add 1 2))" , "out (string a)"));
+    }
+
+    static readonly string[] Pt2 = { "struct pt" , "  param x" , "  param y" , "endstruct" };
+
+    [Fact]
+    public void Constructor_RemovedMemberName_IsDeclaredAgainByCopy()
+    {
+        //생성자에서 지운 멤버 이름(p.y)은 변수에 넣을 때의 복사에서 다시 선언됨
+        Assert.Equal("ok null\nbox { p = pt { x = 1, y = 2 } }\n2" , Run(Pt2.Concat(new[] {
+            "struct box" , "  param p" , "  p.y =" , "endstruct" ,
+            "b = box (pt 1 2)" , "out (string b)" , "out b.p.y" }).ToArray()));
+    }
+
+    [Fact]
+    public void Constructor_OverwrittenMemberName_IsDeclaredAgainByCopy()
+    {
+        Assert.Equal("ok null\nbox { p = pt { x = 1, y = 77 }, p.x = 1 }\n77\n1" , Run(Pt2.Concat(new[] {
+            "struct box" , "  param p" , "  local p.y = 77" , "  7 = p.x" , "endstruct" ,
+            "b = box (pt 1 2)" , "out (string b)" , "out b.p.y" , "out b.p.x" }).ToArray()));
+    }
+
+    [Fact]
+    public void Constructor_InnerStructValue_SeesOriginalScope()
+    {
+        //구조체 안에서 정의한 구조체의 값은 생성자가 만든 값의 영역을 보고 있으므로, 변수에 넣을 때 원래대로 복사해야 함
+        Assert.Equal("ok null\n1\n1\n5" , Run(
+            "leaked = list" ,
+            "struct outer" , "  param n" , "  struct tap" , "    func get" , "      return n" , "    endfunc" , "    func set" , "      param v" , "      n = v" , "    endfunc" , "  endstruct" ,
+            "  list.push leaked (tap)" , "  t = tap" , "endstruct" ,
+            "o = outer 1" , "o.n = 5" , "w = leaked 0" , "out (w.get)" , "out (o.t.get)" , "w.set 77" , "out o.n"));
+    }
+
+    [Fact]
+    public void Inlined_DottedOrRepeatedParameterNames()
+    {
+        Assert.Equal("ok null\n20\n10\n10\n2" , Run(
+            "struct pt" , "  param b" , "endstruct" ,
+            "func f" , "  param a.b" , "  param a" , "  return a.b" , "endfunc" , "out (f 10 (pt 20))" , "out (f 10 30)" ,
+            "func g" , "  param a" , "  param a.b" , "  return a.b" , "endfunc" , "out (g (pt 20) 10)" ,
+            "func h" , "  param a" , "  param a" , "  return a.b" , "endfunc" , "out (h (pt 1) (pt 2))"));
+    }
+
+    [Fact]
+    public void Inlined_ExecuteLineFromCSharp_RunsInFunctionScope()
+    {
+        //인라인된 함수 안에서 C# 함수가 ExecuteLine()을 호출하면, 그 줄은 함수 영역에서 실행되어야 함 (파라미터가 보이고, 만든 변수는 함수가 끝나면 사라짐)
+        Assert.Equal("error 'y'은/는 알수없는 변수/함수 입니다.\n15\n105\n1\n57\npt { x = 7 }" , RunPt(
+            "func g" , "  param x" , "  return (add (eval 'add x 10') 0)" , "endfunc" , "out (g 5)" ,
+            "func h" , "  param x" , "  return (add (length (list (eval 'x = 100'))) x 4)" , "endfunc" , "x = 1" , "out (h 5)" , "out x" ,
+            "func k" , "  param p" , "  return (add p.x (length (list (eval 'p.x = 50'))) p.x -1)" , "endfunc" , "q = pt 7" , "out (k q)" , "out (string q)" ,
+            "func f" , "  param s" , "  return (eval s)" , "endfunc" , "f 'y = 1'" , "out y"));
+    }
+
+    [Fact]
+    public void Inlined_ExtraStructArguments_AreIgnored()
+    {
+        Assert.Equal("ok null\n1\n5\npt { x = 1 }\npt { x = 10 }" , RunPt(
+            "func first" , "  param a" , "  return a.x" , "endfunc" , "p = pt 1" , "q = pt 2" , "out (first p q (pt 3))" ,
+            "func none" , "  return 5" , "endfunc" , "out (none p q)" ,
+            "func par" , "  param a" , "  return (a)" , "endfunc" , "r = par p" , "r.x = 10" , "out (string p)" , "out (string r)"));
     }
 }

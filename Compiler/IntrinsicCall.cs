@@ -150,21 +150,25 @@ public partial class Interpreter
             //[실험] 탈출 분석: 결과가 bool/정수뿐이고 인자를 담거나 바꾸지 않는 내장 함수라면, 변수의 구조체 값을 복사하지 않고 넘김
             bool borrows = op is Intrinsic.Equal or Intrinsic.Less or Intrinsic.Greater or Intrinsic.Not or Intrinsic.And or Intrinsic.Or;
             //빌린 값은 뒤의 인자를 계산하는 동안 바뀌면 안 되므로, 뒤의 인자가 모두 상수나 변수 읽기일 때만
-            Func<object?> eval(int i)
+            //(미리 계산한 값은 이름을 다시 정의했다면 스크립트의 함수를 호출하므로 제외)
+            bool borrowed(int i)
             {
-                Expr e = arguments[i];
-                if (!borrows || e.Borrow is null)
-                    return e.Eval;
+                if (!borrows || arguments[i].Borrow is null)
+                    return false;
                 for (int j = i + 1 ; j < arguments.Length ; j++)
                 {
-                    if (!arguments[j].IsConstant && arguments[j].Borrow is null)
-                        return e.Eval;
+                    Expr later = arguments[j];
+                    if (later.Borrow is null && !(later.IsConstant && later.Guards.Length is 0))
+                        return false;
                 }
-                return e.Borrow;
+                return true;
             }
+            Func<object?> eval(int i) => borrowed(i) ? arguments[i].Borrow! : arguments[i].Eval;
             a = eval(0);
             b = arity > 1 ? eval(1) : null!;
             c = arity > 2 ? eval(2) : null!;
+            borrowed_a = borrowed(0);
+            borrowed_b = arity is 2 && borrowed(1);
         }
         readonly Interpreter owner;
         readonly NameSite site;
@@ -173,6 +177,8 @@ public partial class Interpreter
         readonly Intrinsic op;
         readonly int arity;
         readonly Func<object?> a, b, c;
+        //복사하지 않고 빌린 인자인지 (구조체 값의 비교는 복사본끼리 비교하던 원래 결과와 같아야 함)
+        readonly bool borrowed_a, borrowed_b;
 
         public object? Eval()
         {
@@ -194,6 +200,8 @@ public partial class Interpreter
                 {
                     object? x = a();
                     object? y = b();
+                    if ((borrowed_a || borrowed_b) && op is Intrinsic.Equal && x is StructInstance s && y is StructInstance t)
+                        return box(StructInstance.Same(s , borrowed_a , t , borrowed_b));
                     object r = fast2(op , x , y);
                     return r != Miss ? r : owner.invoke_function(callee , new[] { x , y });
                 }
