@@ -10,6 +10,8 @@ dotnet Jyuno.Benchmarks/bin/Release/net8.0/Jyuno.Benchmarks.dll --iterations 40 
 
 - 반복마다 새 `Runtime`/`Interpreter`를 만들어서(줄 컴파일 포함) 실행 시간을 잽니다.
 - `첫 실행`은 프로세스를 띄우고 처음 실행한 시간(.NET JIT의 Tier0 코드로 실행되는 구간 포함), `안정 상태`는 11번째 반복부터의 중앙값입니다.
+- `--escape on`, `--inline on`은 [실험] 탈출 분석/인라이닝을 켜고 잽니다. `--file a.jyuno,b.jyuno`는 벤치마크 세트 대신 파일을 실행합니다.
+- `struct_`로 시작하는 벤치마크는 구조체(1.5.0) 벤치마크입니다. (복사, 멤버 이름, 구조체 함수)
 - `--json`은 반복마다의 시간을 JSON 한 줄로 출력합니다. `--filter`에 여러 이름을 쉼표로 적으면 적은 순서대로 실행합니다.
 - 다른 .NET 버전에서 재려면 `dotnet build Jyuno.Benchmarks -c Release -p:BenchFramework=net10.0`처럼 지정해서 빌드합니다. (출력은 `bin/Release/net10.0`)
 

@@ -61,6 +61,25 @@ Even if a script removes a global function/variable of the runtime, it is remove
 - Where a built-in function (``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``) is called with 1-3 arguments, such as ``add i 1``, it only checks at run time that the name still refers to the same built-in function, and then computes the result directly without an argument array. (Since 1.3.4)  
   If the value can't be computed directly (``div 1 0``, adding a string and a number, etc.) or the name was redefined/removed, the function is called normally, so results and errors are the same. When an ``if``/``while`` has a single condition, it is evaluated as true/false directly without an argument array.
 
+### Experimental optimizations (since 1.5.2, off by default)
+Turn them on with properties of ``Interpreter``. Results, output and errors are the same as with them off. (If they differ, it is a bug.)
+```cs
+interpreter.EscapeAnalysis = true;
+interpreter.Inlining = true;
+```
+- ``EscapeAnalysis`` copies struct values less often.
+  - A struct value that was just made and is not stored anywhere yet (the copy made by reading a variable, or the result of a constructor) is stored into a variable or parameter as it is, without a second copy. (``b = a``, ``f p`` and ``v = v.plus w`` each make one copy fewer.)
+  - A value that was passed to a C# function, returned to the C# program, or stored in an array/list can be seen from elsewhere, so it is copied as before.
+  - A constructor result that could differ from its copy is copied as before. (A field holds an array/list from outside, the constructor removed or replaced a member name of a struct field, or the struct defines another struct inside.)
+  - Built-in functions that only return a bool/integer (``equal``, ``less``, ``greater``, ``not``, ``and``, ``or``) receive the variable's struct value without a copy. (Only when the arguments after it are constants or variable reads. The comparison gives the same result as comparing copies.)
+  - A ``param`` inside a loop, or in a function that has a ``goto``, can run again, so its argument is copied as before.
+- ``Inlining`` evaluates a function that consists only of ``param`` lines and one ``return`` line (struct functions included) without creating a function scope or a call frame. Parameters are read directly from the arguments.
+  - If a parameter is a struct value, ``p.x`` is read directly from that argument.
+  - If the ``return`` expression has an assignment (``=``) or a label (``:``), calls or indexes a parameter (``p 0``), or parameter names repeat or contain ``.``, the function scope is created as before.
+  - If a C# function calls ``ExecuteLine()`` inside an inlined function, the function scope is created at that point and the line runs inside the function.
+  - The call depth limit (``MaxCallDepth``) and ``CurrentExecuteLine`` are the same as before.
+- The gains are in code that uses structs and in one-line functions. (With both on: about 2.4x for functions that take a struct, 2.5x for struct comparison, 1.9x for calls to one-line functions, 1.6x for struct functions that build a new struct value and 1.3x for struct assignment. Other code is unaffected.)
+
 ## Code analysis (Jyuno.Analysis, since 1.4.0)
 You can analyze a script without running it, using the same rules as the interpreter. This is used by editors, checking tools, and translators to other languages (for example, Native JS in [JyunoSdk](https://github.com/jyunrcaea/JyunoSdk)).
 
