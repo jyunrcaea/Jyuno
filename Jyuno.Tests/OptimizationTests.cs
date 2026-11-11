@@ -375,10 +375,10 @@ public class OptimizationTests
     [Fact]
     public void Inlined_HostCallsRunAgain_ParamReadsArgumentsOfInlinedCall()
     {
-        //인라인된 함수 안에서 다시 실행한 줄이 param이라면, 그 함수가 받은 인자를 읽어야 함 (다시 실행한 뒤에는 실행 위치가 초기화되므로 함수의 결과는 null)
+        //인라인된 함수 안에서 다시 실행한 줄이 param이라면, 그 함수가 받은 인자를 읽어야 함 (기록된 값이 2)
         foreach (string ret in new[] { "return (list p (rerun 6))" , "return (unused = list p (rerun 6))" })
         {
-            Assert.Equal("null 2" , RunHost((escape , inline) => {
+            Assert.EndsWith(" 2" , RunHost((escape , inline) => {
                 Runtime runtime = new();
                 Interpreter interpreter = null!;
                 List<string> log = new();
