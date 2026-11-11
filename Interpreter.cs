@@ -238,6 +238,13 @@ public partial class Interpreter : IDisposable
         running = true;
         //인라인된 호출 도중에 C# 함수가 Run()을 호출했다면 ExecuteLine()처럼 함수 영역을 먼저 만듦
         materialize_inline();
+        //인라인된 호출은 호출 프레임을 만들지 않으므로, 그 안에서 다시 실행한다면 프레임을 만들어 둠 (반복문의 상태가 바깥 호출과 섞이지 않도록)
+        bool frameless = inline_depth > (frames.Count > 0 ? frames.Peek().InlineDepth : 0);
+        if (frameless)
+        {
+            inline_depth--;
+            frames.Push(new CallFrame(inline_args , inline_depth));
+        }
         //스크립트가 바뀌었을수 있으므로 블록 정보를 새로 계산
         blocks = null;
         top_repeat_counts.Clear();
@@ -271,6 +278,11 @@ public partial class Interpreter : IDisposable
             current = top;
             top_for_states.Clear();
             CurrentExecuteLine = -1;
+            if (frameless)
+            {
+                frames.Pop();
+                inline_depth++;
+            }
         }
     }
     object? execute_line(int line , bool flow)
@@ -539,11 +551,14 @@ public partial class Interpreter : IDisposable
     //함수 호출 정보 (인자, 반복 횟수)
     sealed class CallFrame
     {
-        public CallFrame(object?[] args)
+        public CallFrame(object?[] args , int inline_depth)
         {
             Args = args;
+            InlineDepth = inline_depth;
         }
         public readonly object?[] Args;
+        //이 호출이 시작될 때 진행중이던 인라인된 호출의 수 (이보다 많다면 가장 안쪽의 호출은 프레임이 없는 인라인된 호출)
+        public readonly int InlineDepth;
         public readonly Dictionary<int , long> RepeatCounts = new();
         public readonly Dictionary<int , ForState> ForStates = new();
     }
@@ -619,7 +634,7 @@ public partial class Interpreter : IDisposable
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         InlineShape? outer_frame = inline_frame;
-        frames.Push(new CallFrame(args));
+        frames.Push(new CallFrame(args , inline_depth));
         current = body;
         inline_frame = null;
         try
@@ -864,7 +879,9 @@ public partial class Interpreter : IDisposable
                 CurrentExecuteLine = current_line;
             }
         }
+        object?[] caller_args = inline_args;
         current = new Scope(function.Scope);
+        inline_args = args;
         inline_frame = null;
         inline_depth++;
         try
@@ -881,6 +898,7 @@ public partial class Interpreter : IDisposable
         finally
         {
             current = caller;
+            inline_args = caller_args;
             inline_frame = outer_frame;
             inline_depth--;
             CurrentExecuteLine = current_line;

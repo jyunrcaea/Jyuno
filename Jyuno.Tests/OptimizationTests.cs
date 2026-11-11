@@ -338,6 +338,41 @@ public class OptimizationTests
     }
 
     [Fact]
+    public void Inlined_HostCallsRunAgain_LoopStateIsSeparate()
+    {
+        //함수 안의 for/repeat 도중에 호출한 인라인된 함수에서 C# 함수가 같은 줄부터 Run()을 다시 호출해도, 바깥 반복문의 진행 상태와 섞이면 안 됨
+        foreach (string loop in new[] { "for i (list 1 2 3)" , "repeat 3" })
+        {
+            foreach (string ret in new[] { "return (rerun 6)" , "return (unused = rerun 6)" })
+            {
+                string result = RunHost((escape , inline) => {
+                    Runtime runtime = new();
+                    Interpreter interpreter = null!;
+                    List<string> log = new();
+                    bool again = false;
+                    runtime.AddFunction("log" , args => { log.Add(Text(args[0])); return null; });
+                    runtime.AddFunction("rerun" , args => {
+                        if (again)
+                            return -1L;
+                        again = true;
+                        try { return interpreter.Run((int)(long)args[0]!); }
+                        finally { again = false; }
+                    });
+                    interpreter = runtime.Create(new[] {
+                        "func g" , "param p" , ret , "endfunc" ,
+                        "func outer" , "param q" , loop , "log 'in'" , "k = g 1" , "log 'out'" , "end" , "return 1" , "endfunc" });
+                    interpreter.EscapeAnalysis = escape;
+                    interpreter.Inlining = inline;
+                    interpreter.Run();
+                    return Text(interpreter.ExecuteLine("(outer 5)")) + " " + string.Join("" , log.Select(o => o[0]));
+                });
+                //바깥 반복문은 세번 모두 돌고, 그때마다 다시 실행한 반복문도 세번씩 돎
+                Assert.Equal("1 iioioiooiioioiooiioioioo" , result);
+            }
+        }
+    }
+
+    [Fact]
     public void ValuesReturnedToHost_AreSeparateFromScriptValues()
     {
         Assert.Equal("1,2" , RunHost((escape , inline) => {
