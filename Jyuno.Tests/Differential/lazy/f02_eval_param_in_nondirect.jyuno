@@ -1,0 +1,12 @@
+func f
+param a
+return (zz = list a (host.eval 'param b') b)
+endfunc
+console.writeline (host.show (f 1 2))
+func h
+param x
+param y
+return (f 7 8)
+endfunc
+console.writeline (host.show (h 3 4))
+return
