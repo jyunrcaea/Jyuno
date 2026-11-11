@@ -1,0 +1,24 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+endstruct
+func f
+  param q
+  param trapvar
+  return (list (host.eval "trapvar =") (equal q trapvar) q.x)
+endfunc
+func g
+  param q
+  param trapvar
+  return (list (equal q trapvar) (host.eval "trapvar =") (equal q trapvar) q.x)
+endfunc
+host.settrap "(pt (sub (q.move 8) 8) 4)"
+v = pt 3 4
+console.writeline (host.show (f v 1) (f (pt 3 4) 2) v)
+console.writeline (host.show (g v (pt 3 4)) (g (pt 3 4) v) v)
+return

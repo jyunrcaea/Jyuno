@@ -18,7 +18,7 @@ namespace Jyuno.Tests;
 //  host.keep v / host.get [i]   받은 값을 보관했다가 돌려줌 (C#으로 빠져나간 값)
 //  host.eval "줄" / host.evalline n   실행 도중에 ExecuteLine()을 호출
 //  host.var                     값을 그대로 보관하는 C# 변수
-//  host.settrap "줄" / host.trap   읽을 때마다 미리 정한 줄을 실행하는 C# 변수 (변수 읽기의 부수 효과)
+//  host.settrap "줄" / host.trap / trapvar   읽을 때마다 미리 정한 줄을 실행하는 C# 변수 (변수 읽기의 부수 효과)
 //  host.alist / host.olist      C#이 만든 컬렉션 (ArrayList는 구조체를 복사할 때 복사되지 않음)
 //  host.show a b ...            값들을 필드까지 풀어서 문자열로
 //  host.poke v "필드"           받은 구조체 값의 리스트 필드를 C#에서 바꿈
@@ -105,6 +105,8 @@ internal static class DifferentialHarness
             runtime.AddVariable("host.var" , () => host_var , v => host_var = v);
             runtime.AddFunction("host.settrap" , a => { trap_line = a.Length > 0 ? a[0] as string : null; return null; });
             runtime.AddVariable("host.trap" , () => { trap_count++; return trap_line is null ? (object?)(long)trap_count : interpreter.ExecuteLine(trap_line); } , v => { });
+            //이름에 '.'이 없는 같은 변수 (파라미터 이름과 겹칠수 있음)
+            runtime.AddVariable("trapvar" , () => { trap_count++; return trap_line is null ? (object?)(long)trap_count : interpreter.ExecuteLine(trap_line); } , v => { });
             runtime.AddFunction("host.alist" , a => new ArrayList(a));
             runtime.AddFunction("host.olist" , a => new List<object?>(a));
             runtime.AddFunction("host.show" , a => string.Join("|" , a.Select(Format)));
