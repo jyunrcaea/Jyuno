@@ -22,4 +22,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- 차등 테스트(DifferentialTests)의 스크립트 -->
+  <ItemGroup>
+    <None Include="Differential\**\*.jyuno" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

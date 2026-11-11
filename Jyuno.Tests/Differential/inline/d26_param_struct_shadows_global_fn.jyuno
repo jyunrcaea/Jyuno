@@ -1,0 +1,20 @@
+struct fake
+  pi = 3
+  func abs
+    param v
+    return "fake abs"
+  endfunc
+  func sort
+    param l
+    return "fake sort"
+  endfunc
+endstruct
+func f
+  param math
+  return (list math.pi (math.abs -5) (math.sin 0))
+endfunc
+func g
+  param array
+  return (list (array.sort (list 3 1 2)) (array.reverse (list 1 2)))
+endfunc
+console.writeline (host.show (f (fake)) (f 0) (g (fake)) (g 1))

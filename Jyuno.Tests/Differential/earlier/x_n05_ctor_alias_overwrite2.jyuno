@@ -1,0 +1,20 @@
+struct pt
+    param x
+    param y
+endstruct
+struct box
+    p.y = 5
+    param p
+endstruct
+b = box (pt 1 2)
+console.writeline (string b)
+console.writeline b.p.y
+struct box2
+    param p
+    func p.x
+        return 42
+    endfunc
+endstruct
+c = box2 (pt 1 2)
+console.writeline (string c)
+console.writeline (c.p.x)

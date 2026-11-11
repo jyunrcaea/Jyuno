@@ -1,0 +1,25 @@
+struct pt
+    param b
+endstruct
+func f
+    param a.b
+    param a
+    return a.b
+endfunc
+console.writeline (f 10 (pt 20))
+console.writeline (f 10 30)
+func g
+    param a
+    param a.b
+    return a.b
+endfunc
+console.writeline (g (pt 20) 10)
+func h
+    param a
+    param a
+    return a.b
+endfunc
+console.writeline (h (pt 1) (pt 2))
+a.b = 55
+console.writeline (h (pt 1) 2)
+console.writeline (h 1 (pt 2))

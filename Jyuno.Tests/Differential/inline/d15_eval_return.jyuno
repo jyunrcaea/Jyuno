@@ -1,0 +1,6 @@
+func f
+  param p
+  return (list (host.eval "return p") (host.eval "return") p)
+endfunc
+console.writeline (host.show (f 5))
+return 0

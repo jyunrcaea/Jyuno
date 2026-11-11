@@ -1,0 +1,13 @@
+struct s
+  func x
+    return 5
+  endfunc
+  local x = 9
+  func y
+    return x
+  endfunc
+endstruct
+a = s
+b = a
+b.x = 10
+console.writeline (host.show a b (a.y) (b.y))

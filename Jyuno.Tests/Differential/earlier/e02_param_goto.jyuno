@@ -1,0 +1,15 @@
+struct pt
+    param x
+endstruct
+func f
+    n = 0
+    again:
+    param p
+    console.writeline p.x
+    p.x = add p.x 10
+    n = add n 1
+    if (less n 3)
+        goto again
+    end
+endfunc
+f (pt 1)

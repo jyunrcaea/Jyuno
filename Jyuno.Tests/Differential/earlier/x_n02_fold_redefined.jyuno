@@ -1,0 +1,13 @@
+struct pt
+    param x
+endstruct
+a = pt 1
+b = pt 1
+func add
+    a.x = 99
+    return b
+endfunc
+console.writeline (equal a (add 1 2))
+console.writeline (string a)
+a.x = 1
+console.writeline (equal a b (add 1 2))

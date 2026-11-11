@@ -1,0 +1,6 @@
+l.x = "dotted"
+func f
+  param l
+  return (list l l.x)
+endfunc
+console.writeline (host.show (f (list 1 2)) (f "s"))

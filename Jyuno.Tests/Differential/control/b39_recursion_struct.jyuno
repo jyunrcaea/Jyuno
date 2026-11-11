@@ -1,0 +1,20 @@
+struct node
+  param depth
+  if (less depth 3)
+    child = node (add depth 1)
+  end
+  func count
+    if (less depth 3)
+      return (add 1 (child.count))
+    end
+    return 1
+  endfunc
+endstruct
+n = node 0
+console.writeline (host.show n)
+console.writeline (n.count)
+m = n.child
+m.depth = 2
+console.writeline (m.count)
+console.writeline (n.count)
+console.writeline (host.show m)

@@ -1,0 +1,25 @@
+leaked = list
+struct outer
+    param n
+    struct tap
+        func get
+            return n
+        endfunc
+        func set
+            param v
+            n = v
+        endfunc
+    endstruct
+    list.push leaked (tap)
+    t = tap
+endstruct
+o = outer 1
+o.n = 5
+w = leaked 0
+console.writeline (w.get)
+console.writeline (o.t.get)
+w.set 77
+console.writeline o.n
+p = o
+p.n = 6
+console.writeline (p.t.get)

@@ -1,0 +1,12 @@
+struct bag
+  param l
+endstruct
+hl = host.alist 1 2
+a = bag hl
+b = a
+hl 0 99
+console.writeline (host.show a b (equal a b))
+c = bag (host.alist 5)
+d = c
+c.l 0 7
+console.writeline (host.show c d)

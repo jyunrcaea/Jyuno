@@ -1,0 +1,13 @@
+struct bag
+  param arr
+  param lst
+endstruct
+a = bag (array 1 2 3) (list 'a' 'b')
+b = a
+b.arr 0 99
+b.lst 0 'z'
+console.writeline (host.show a b (equal a b))
+c = bag (array.range 3) (list.range 2)
+d = c
+d.arr 1 50
+console.writeline (host.show c d)

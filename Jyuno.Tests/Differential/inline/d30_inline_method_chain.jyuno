@@ -1,0 +1,28 @@
+struct s
+  param x
+  func a
+    return (b x)
+  endfunc
+  func b
+    param v
+    return (c v v)
+  endfunc
+  func c
+    param v
+    param w
+    return (add v w x)
+  endfunc
+  func set
+    param v
+    x = v
+    return (a)
+  endfunc
+endstruct
+i = s 1
+j = i
+console.writeline (host.show (i.a) (j.set 10) (i.a) (j.a) i j)
+func viaparam
+  param p
+  return (list (p.a) (p.set 5) (p.a) p)
+endfunc
+console.writeline (host.show (viaparam i) i)

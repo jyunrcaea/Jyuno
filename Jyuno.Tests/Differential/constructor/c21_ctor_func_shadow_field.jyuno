@@ -1,0 +1,11 @@
+struct s
+  param x
+  func x
+    return 5
+  endfunc
+endstruct
+a = s 1
+b = a
+console.writeline (host.show a b)
+console.writeline (a.x)
+console.writeline (b.x)

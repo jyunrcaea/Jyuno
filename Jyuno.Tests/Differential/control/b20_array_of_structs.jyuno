@@ -1,0 +1,33 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+a = array (pt 1 2) (pt 3 4)
+b = a 0
+b.move 5
+a 1 b
+b.move 5
+console.writeline (host.show a b)
+c = add a b
+b.move 1
+console.writeline (host.show c)
+s = array.slice a 0
+t = (s 0)
+t.x = 77
+console.writeline (host.show a s)
+cp = array.copy a
+u = cp 0
+u.x = 88
+console.writeline (host.show a cp u)

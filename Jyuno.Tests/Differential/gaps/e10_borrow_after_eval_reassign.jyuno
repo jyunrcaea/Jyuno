@@ -1,0 +1,28 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  param p
+  return (list (equal p (pt 1 2)) (host.eval "p = (pt 9 9)") (equal p (pt 9 9)) (not p) (and p p) (equal p p) (host.eval "p = 0") (not p) (equal p 0) (or p p))
+endfunc
+console.writeline (host.show (f (pt 1 2)))
+func g
+  param p
+  param q
+  return (list (equal p q) (host.eval "q = p") (equal p q) (equal q p) (host.eval "p.x = 77") (equal p q) (equal p.x q.x) (less p.x q.x))
+endfunc
+console.writeline (host.show (g (pt 1 2) (pt 3 4)))
+return 0

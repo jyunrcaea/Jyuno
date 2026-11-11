@@ -1,0 +1,16 @@
+struct big
+  param a
+  param b
+  param c
+  d = add a b
+  e = list a b
+  f = "s"
+  g = null
+  h = true
+  i = 1.5
+endstruct
+x = big 1 2 3
+y = x
+y.e 0 99
+y.g = 5
+console.writeline (host.show x y (equal x y))

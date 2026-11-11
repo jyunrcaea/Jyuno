@@ -1,0 +1,24 @@
+struct pt
+    param x
+endstruct
+g = pt 1
+struct box
+    p = g
+    q = g
+    func bump
+        p.x = add p.x 1
+        return p.x
+    endfunc
+    bump
+endstruct
+b = box
+console.writeline (string b)
+console.writeline (b.bump)
+c = b
+console.writeline (c.bump)
+console.writeline (string b)
+console.writeline (string g)
+l = list (box) (box)
+d = l 0
+d.bump
+console.writeline (string (l 0))

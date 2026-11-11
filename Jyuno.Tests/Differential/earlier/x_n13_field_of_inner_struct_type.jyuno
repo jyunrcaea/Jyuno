@@ -1,0 +1,22 @@
+leaked = list
+struct holder
+    param n
+    struct tap
+        func get
+            return n
+        endfunc
+    endstruct
+endstruct
+struct wrap
+    param h
+    list.push leaked (h.tap)
+endstruct
+hh = holder 1
+w = wrap hh
+w.h.n = 9
+k = leaked 0
+console.writeline (k.get)
+v = wrap (holder 2)
+v.h.n = 8
+k = leaked 1
+console.writeline (k.get)

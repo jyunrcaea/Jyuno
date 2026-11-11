@@ -1,0 +1,29 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct s
+  param p
+  if (greater p.x 5)
+    return p
+  end
+  extra = p
+  extra.move 1
+endstruct
+a = s (pt 9 9)
+b = s (pt 1 1)
+c = b
+c.extra.move 1
+console.writeline (host.show a b c)

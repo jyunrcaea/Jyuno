@@ -1,0 +1,31 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func mk
+  param n
+  return (pt n n)
+endfunc
+i = 0
+while (less i 4)
+  v = mk i
+  w = v
+  w.move 10
+  console.writeline (host.show (v.sum) (w.sum) (v.move 1) (w.move 1) v w)
+  v = w
+  w = mk 100
+  console.writeline (host.show (v.sum) (w.sum) v w)
+  i = add i 1
+end

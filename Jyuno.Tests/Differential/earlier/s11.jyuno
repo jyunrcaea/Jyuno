@@ -1,0 +1,8 @@
+func q
+    param f
+    return (f)
+endfunc
+func one
+    return 1
+endfunc
+console.writeline (q one)

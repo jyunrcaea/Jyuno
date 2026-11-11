@@ -1,0 +1,25 @@
+struct pt
+    param x
+endstruct
+func mk
+    param n
+    return (pt n)
+endfunc
+a = mk 1
+b = a
+b.x = 2
+l = list (mk 3) (mk 4)
+c = l 0
+c.x = 30
+console.writeline (string a)
+console.writeline (string b)
+console.writeline (string l)
+local d = mk 5
+e = d
+d.x = 6
+console.writeline (string d)
+console.writeline (string e)
+for z (list (mk 7) (mk 8))
+    z.x = 0
+    console.writeline (string z)
+end

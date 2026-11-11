@@ -1,0 +1,23 @@
+#!dump n
+n = 0
+func leaf
+  return 1
+endfunc
+func rec
+  param k
+  n = k
+  if (less k 198)
+    return (rec (add k 1))
+  end
+  return (leaf)
+endfunc
+console.writeline (rec 0)
+func rec2
+  param k
+  n = k
+  if (less k 199)
+    return (rec2 (add k 1))
+  end
+  return (leaf)
+endfunc
+console.writeline (rec2 0)

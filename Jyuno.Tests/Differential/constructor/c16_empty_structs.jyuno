@@ -1,0 +1,15 @@
+struct e
+endstruct
+struct only_method
+  func hi
+    return "hi"
+  endfunc
+endstruct
+a = e
+b = a
+console.writeline (host.show a b (equal a b) (equal a a) (equal (e) (e)))
+m = only_method
+n = m
+console.writeline (host.show (m.hi) (n.hi) (equal m n))
+l = list (e) (e) (only_method)
+console.writeline (host.show l (list.contains l a) (list.indexof l m))

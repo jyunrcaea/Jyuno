@@ -1,0 +1,19 @@
+out = list
+for i (list 1 2)
+  struct loc
+    param v
+    func get
+      return (add v i)
+    endfunc
+  endstruct
+  a = loc 10
+  list.push out a
+  b = a
+  console.writeline (b.get)
+end
+console.writeline (host.show out)
+x = out 0
+y = out 1
+console.writeline (x.get)
+console.writeline (y.get)
+console.writeline (equal x y)

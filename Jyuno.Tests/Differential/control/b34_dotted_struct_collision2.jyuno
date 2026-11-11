@@ -1,0 +1,29 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct weird
+  b.x = 1
+  d = 2
+endstruct
+a = weird
+a.b = pt 10 20
+console.writeline (host.show a a.b a.d)
+console.writeline a.b.x
+a.b.x = 7
+console.writeline (host.show a a.b)
+c = a
+console.writeline (host.show c)
+console.writeline c.b.x

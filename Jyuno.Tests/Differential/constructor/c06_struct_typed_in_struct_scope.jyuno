@@ -1,0 +1,70 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+leaked = list
+struct outer
+  param n
+  struct inner
+    param v
+    func get
+      return (add v n)
+    endfunc
+  endstruct
+  i = inner 1
+  list.push leaked (inner 2)
+  func mk
+    param v
+    return (inner v)
+  endfunc
+  func bump
+    n = add n 10
+    return n
+  endfunc
+endstruct
+o = outer 100
+console.writeline (host.show o leaked)
+t = leaked 0
+console.writeline (t.get)
+console.writeline (o.i.get)
+o.bump
+console.writeline (t.get)
+console.writeline (o.i.get)
+m = o.mk 5
+console.writeline (m.get)
+o.bump
+console.writeline (m.get)
+m2 = m
+console.writeline (m2.get)
+p = o
+p.bump
+console.writeline (host.show (m.get) (m2.get) (p.i.get) (o.i.get))
+struct wrap
+  param w
+  func get
+    return (w.get)
+  endfunc
+endstruct
+ww = wrap m
+ww2 = ww
+o.bump
+console.writeline (host.show (ww.get) (ww2.get) (equal ww ww2))
+struct wrap2
+  param inner
+endstruct
+w3 = wrap2 (wrap (o.mk 1))
+w4 = w3
+o.bump
+console.writeline (host.show (w3.inner.get) (w4.inner.get) (w3.inner.w.get))

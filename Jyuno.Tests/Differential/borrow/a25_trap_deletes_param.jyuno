@@ -1,0 +1,23 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  param p
+  return (less p host.trap)
+endfunc
+host.settrap "p ="
+p = "outer"
+console.writeline (f (pt 3 4))

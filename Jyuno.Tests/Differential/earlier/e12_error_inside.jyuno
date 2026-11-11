@@ -1,0 +1,6 @@
+func f
+    param x
+    return (div x 0)
+endfunc
+console.writeline "a"
+f 1

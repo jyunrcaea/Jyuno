@@ -1,0 +1,30 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+v = pt 1 2
+host.var = v
+v.move 5
+console.writeline (host.show v host.var)
+w = host.var
+w.move 7
+console.writeline (host.show v host.var w)
+host.var = (pt 9 9)
+x = host.var
+x.x = 0
+y = host.var
+console.writeline (host.show x y host.var)
+host.var = (v.plus w)
+console.writeline (host.show host.var)

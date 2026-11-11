@@ -1,0 +1,24 @@
+struct bag
+  param l
+endstruct
+shared = list 1 2
+func mk
+  return (bag shared)
+endfunc
+func mk2
+  param l
+  return (bag l)
+endfunc
+func id
+  param b
+  return b
+endfunc
+a = mk
+b = mk2 shared
+c = id (mk)
+d = id (bag shared)
+list.push shared 3
+list.push a.l 10
+list.push b.l 20
+console.writeline (host.show a b c d shared)
+console.writeline (host.show (equal a b) (equal c d) (equal (mk) (mk)) (equal (bag shared) (bag shared)))

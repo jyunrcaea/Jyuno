@@ -1,0 +1,10 @@
+struct pt
+    param x
+endstruct
+func f
+    param p
+    return p.zz
+endfunc
+p.zz = 4
+console.writeline (f (pt 2))
+console.writeline (f 0)

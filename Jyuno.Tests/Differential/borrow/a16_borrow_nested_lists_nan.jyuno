@@ -1,0 +1,37 @@
+struct bag
+  param l
+  func setl
+    param v
+    l = v
+  endfunc
+endstruct
+nan = host.nan
+sh = list nan 1
+a = bag 0
+b = bag 0
+a.setl sh
+b.setl sh
+console.writeline (equal a b)
+console.writeline (equal a a)
+x = a
+console.writeline (equal a x)
+sh2 = list 1 2
+a.setl sh2
+b.setl sh2
+console.writeline (equal a b)
+console.writeline (equal a a)
+deep = list (list nan) 1
+a.setl deep
+b.setl deep
+console.writeline (equal a b)
+console.writeline (equal a a)
+deep2 = list (list 1) 1
+a.setl deep2
+b.setl deep2
+console.writeline (equal a b)
+arr = array nan 2.5
+a.setl arr
+console.writeline (equal a a)
+console.writeline (equal a b)
+b.setl arr
+console.writeline (equal a b)

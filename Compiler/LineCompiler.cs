@@ -24,6 +24,9 @@ public partial class Interpreter
         public bool MayEndEarly { get; init; }
         //[실험] 탈출 분석: 변수를 읽기만 하는 곳에서 쓸 값 (구조체 값을 복사하지 않음, 받은 쪽이 값을 담거나 바꾸지 않을 때만 사용)
         public Func<object?>? Borrow { get; init; }
+        //Borrow로 읽을 때 프로그램이 제공한 변수의 get(C# 코드)이 실행되는지 (null이라면 실행되지 않음)
+        //그렇다면 그 코드가 앞에서 빌린 구조체 값을 바꿀수 있으므로, 앞의 값은 빌리지 않고 복사해야 함
+        public Func<bool>? Hosted { get; init; }
 
         public static Expr Constant(object? value) => new(() => value) { IsConstant = true , Value = value };
         public static Expr Folded(Func<object?> eval , object? value , (NameSite, object)[] guards , bool may_end_early) => new(eval) { IsConstant = true , Value = value , Guards = guards , MayEndEarly = may_end_early };
@@ -387,6 +390,9 @@ public partial class Interpreter
         } , result , guards , may_end_early);
     }
 
+    //이름이 가리키는 것이 프로그램이 제공한 변수인지 (읽을 때 C# 코드가 실행됨, null/true/math.pi 같은 상수는 제외)
+    static bool is_hosted(object? holder) => holder is VariableInterface and not JyunoVariable and not NativeConstantVariable;
+
     //start 위치부터 ')' 또는 줄 끝까지의 인자들을 컴파일
     //end: 인자를 끝낸 ')'의 위치 (없다면 줄의 길이)
     Expr[] compile_arguments(Token[] tokens , int start , out int end)
@@ -415,7 +421,15 @@ public partial class Interpreter
                                 return borrow && EscapeAnalysis ? vi.Get() : read(vi.Get());
                             throw new JyunoException($"'{name}'에서 값을 가져올수 없습니다.");
                         };
-                        arguments.Add(new Expr(member_read(false)) { Borrow = member_read(true) });
+                        arguments.Add(new Expr(member_read(false)) {
+                            Borrow = member_read(true) ,
+                            Hosted = () => {
+                                object?[] args = inline_args;
+                                if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.ContainsKey(member))
+                                    return false;
+                                return resolve(site , out object? holder) && is_hosted(holder);
+                            }
+                        });
                         break;
                     }
                     Expr variable = new Expr(() => {
@@ -431,7 +445,8 @@ public partial class Interpreter
                             if (holder is VariableInterface vi)
                                 return EscapeAnalysis ? vi.Get() : read(vi.Get());
                             throw new JyunoException($"'{name}'에서 값을 가져올수 없습니다.");
-                        }
+                        } ,
+                        Hosted = () => resolve(site , out object? holder) && is_hosted(holder)
                     };
                     //[실험] 인라이닝: 파라미터 이름은 영역 대신 인자를 바로 읽음
                     arguments.Add(inline_slot(name) is int slot ? slot_read(slot , variable) : variable);

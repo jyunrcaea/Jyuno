@@ -1,0 +1,20 @@
+struct inner
+  param x
+  param y
+  func drop
+    y =
+  endfunc
+endstruct
+struct outer
+  param mode
+  i = inner 1 2
+  if mode
+    i.drop
+  end
+endstruct
+a = outer 0
+b = outer 1
+c = b
+console.writeline (host.show a b c (equal b c))
+console.writeline c.i.x
+console.writeline b.i.y

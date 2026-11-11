@@ -1,0 +1,12 @@
+func helper
+  return 5
+endfunc
+func f
+  param helper
+  return (list helper (add helper 1))
+endfunc
+func g
+  param x
+  return (helper)
+endfunc
+console.writeline (host.show (f 10) (g 1) (helper))

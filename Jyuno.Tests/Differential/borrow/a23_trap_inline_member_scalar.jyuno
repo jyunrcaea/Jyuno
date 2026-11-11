@@ -1,0 +1,22 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func cmp
+  param p
+  return (list p.x host.trap p.x (equal p.x host.trap) p.x)
+endfunc
+host.settrap "p.x = add p.x 10"
+console.writeline (host.show (cmp (pt 1 2)))

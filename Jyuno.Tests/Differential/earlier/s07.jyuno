@@ -1,0 +1,6 @@
+func f
+    param x
+    return (y = x)
+endfunc
+f 3
+console.writeline y

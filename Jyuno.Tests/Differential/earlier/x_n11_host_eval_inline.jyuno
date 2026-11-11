@@ -1,0 +1,69 @@
+struct pt
+    param x
+endstruct
+func show
+    param v
+    console.writeline v
+    return 0
+endfunc
+func f
+    param s
+    return (host.eval s)
+endfunc
+f "y = 1"
+console.writeline (host.eval "add 1 2")
+func g
+    param x
+    return (add (host.eval "add x 10") x)
+endfunc
+console.writeline (g 5)
+func h
+    param x
+    return (add (show (host.eval "x = 100")) x (host.eval "x"))
+endfunc
+x = 1
+console.writeline (h 5)
+console.writeline x
+func k
+    param p
+    return (add (show (host.eval "p.x = 50")) p.x (host.eval "p.x"))
+endfunc
+q = pt 7
+console.writeline (k q)
+console.writeline (string q)
+func m
+    param p
+    return (add p.x (show (host.eval "p = 3")) p)
+endfunc
+console.writeline (m q)
+func m2
+    param p
+    return (add p.x (show (host.eval "p =")) (show (host.eval "local p = 4")) p)
+endfunc
+console.writeline (m2 q)
+func outer
+    param a
+    return (add a (inner (add a 1)) a)
+endfunc
+func inner
+    param b
+    return (add (show (host.eval "b = 1000")) b (show (host.eval "c = 5")) c)
+endfunc
+console.writeline (outer 1)
+func cnt
+    param c
+    return (add (show (host.eval "(c.next)")) (c.next) (host.eval "(c.next)"))
+endfunc
+struct counter
+    param count
+    func next
+        count = add count 1
+        return count
+    endfunc
+endstruct
+cc = counter 0
+console.writeline (cnt cc)
+console.writeline cc.count
+console.writeline (host.eval "z = 9")
+console.writeline z
+console.writeline y

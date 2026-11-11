@@ -1,0 +1,56 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+log = list
+func f1
+  param a
+  local t = (host.keep a)
+  return (add a 1)
+endfunc
+func f2
+  param a
+  local a = 50
+  return (add a 1)
+endfunc
+func f3
+  param p
+  local q = p
+  return q.x
+endfunc
+func f4
+  param a
+  if a
+  end
+  return a
+endfunc
+func f5
+  param a
+  repeat 2
+  end
+  return a
+endfunc
+func f6
+  param a
+  for a (list 1 2)
+  end
+  return a
+endfunc
+console.writeline (host.show (f1 1) (host.get) (f2 1) (f3 (pt 4 5)) (f4 1) (f5 2) (f6 3))
+func f7
+  param
+  return 1
+endfunc
+console.writeline (f7 1)

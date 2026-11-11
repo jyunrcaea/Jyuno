@@ -1,0 +1,36 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  param add
+  return (sub add 1)
+endfunc
+func g
+  param add
+  return (add 1 2)
+endfunc
+func h
+  param true
+  param null
+  return (list true null (equal true null))
+endfunc
+func k
+  param equal
+  return (equal equal equal)
+endfunc
+console.writeline (host.show (f 10) (h 1 2) (h))
+console.writeline (host.show (g (list 5 6 7)))
+console.writeline (k 3)

@@ -1,0 +1,53 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct box
+  param a
+  param b
+  items = list 1 2
+  func grow
+    param n
+    a.x = add a.x n
+    list.push items n
+    return (length items)
+  endfunc
+  func swap
+    t = a
+    a = b
+    b = t
+  endfunc
+  func geta
+    return a
+  endfunc
+endstruct
+func mk
+  param a
+  param b
+  return (box a b)
+endfunc
+func mk2
+  param a
+  return (box a a)
+endfunc
+p = pt 1 2
+k = mk p p
+k.a.move 5
+m = mk2 p
+m.a.move 7
+m.items 0 99
+n = mk2 (pt 0 0)
+n.b.move 1
+console.writeline (host.show k m n p)

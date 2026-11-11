@@ -1,0 +1,84 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct box
+  param a
+  param b
+  items = list 1 2
+  func grow
+    param n
+    a.x = add a.x n
+    list.push items n
+    return (length items)
+  endfunc
+  func swap
+    t = a
+    a = b
+    b = t
+  endfunc
+  func geta
+    return a
+  endfunc
+endstruct
+func f1
+  param p
+  return (p)
+endfunc
+func f2
+  param p
+  return ((p))
+endfunc
+func f3
+  param p
+  return (p.x)
+endfunc
+func f4
+  param p
+  return (p.sum)
+endfunc
+func f5
+  param p
+  return p.items
+endfunc
+func f6
+  param p
+  return (p.items 0)
+endfunc
+func f7
+  param p
+  return (p.items 0 99) p
+endfunc
+func f8
+  param p
+  return (list (p.items 0 99) p p.items)
+endfunc
+func f9
+  param p
+  return (p.a.sum)
+endfunc
+func f10
+  param p
+  return (list p.a.x (p.a.move 3) p.a (p.geta))
+endfunc
+a = pt 1 2
+k = box a a
+console.writeline (host.show (f1 a) (f2 a) (f3 a) (f4 a) (f5 k) (f6 k) (f7 k) (f8 k) (f9 k) (f10 k) k)
+l = f5 k
+l 0 55
+console.writeline (host.show k l)
+x = f1 a
+x.move 1
+console.writeline (host.show a x)

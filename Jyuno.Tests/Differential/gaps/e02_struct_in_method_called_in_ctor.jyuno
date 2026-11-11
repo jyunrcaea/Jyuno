@@ -1,0 +1,32 @@
+leaked = list
+struct outer
+  param n
+  func mk
+    struct tap
+      func get
+        return n
+      endfunc
+    endstruct
+    list.push leaked (tap)
+    return (tap)
+  endfunc
+  mk
+  func bump
+    n = add n 1
+    return n
+  endfunc
+endstruct
+o = outer 10
+o.n = 50
+t = leaked 0
+console.writeline (host.show (t.get) (o.bump) (t.get) o)
+u = o.mk
+o.bump
+console.writeline (host.show (u.get) (t.get))
+func make
+  return (outer 7)
+endfunc
+q = make
+q.n = 70
+t2 = leaked 2
+console.writeline (host.show (t2.get) (q.bump) (t2.get))
