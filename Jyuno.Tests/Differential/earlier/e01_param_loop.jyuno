@@ -1,0 +1,24 @@
+struct pt
+    param x
+    param y
+endstruct
+func f
+    i = 0
+    while (less i 3)
+        param q
+        console.writeline (string q)
+        q.x = add q.x 1
+        i = add i 1
+    end
+    return q
+endfunc
+r = f (pt 1 2)
+console.writeline (string r)
+func g
+    repeat 2
+        param q
+        q.x = add q.x 5
+        console.writeline (string q)
+    end
+endfunc
+g (pt 1 2)

@@ -1,0 +1,36 @@
+struct counter
+    param count
+    func next
+        count = add count 1
+        return count
+    endfunc
+endstruct
+func bump
+    param c
+    return (c.next)
+endfunc
+c = counter 0
+console.writeline (bump c)
+console.writeline (bump c)
+console.writeline c.count
+l = list (counter 10) (counter 20)
+console.writeline (bump (l 0))
+console.writeline (bump (l 0))
+console.writeline (string l)
+func getc
+    param c
+    return c.count
+endfunc
+console.writeline (getc c)
+console.writeline (getc (l 1))
+console.writeline (getc 5)
+c.count = 3
+console.writeline (getc c)
+func self
+    param c
+    return c
+endfunc
+d = self c
+d.count = 1000
+console.writeline (string c)
+console.writeline (string d)

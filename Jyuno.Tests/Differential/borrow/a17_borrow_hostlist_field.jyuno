@@ -1,0 +1,24 @@
+struct bag
+  param l
+endstruct
+nan = host.nan
+hl = host.alist nan 1
+a = bag hl
+b = bag hl
+console.writeline (equal a b)
+console.writeline (equal a a)
+ol = host.olist nan 1
+c = bag ol
+d = bag ol
+console.writeline (equal c d)
+console.writeline (equal c c)
+mixed = host.alist (list nan) 2
+e = bag mixed
+console.writeline (equal e e)
+f = e
+console.writeline (equal e f)
+mixed2 = list (host.alist nan) 2
+g = bag mixed2
+console.writeline (equal g g)
+h = g
+console.writeline (equal g h)

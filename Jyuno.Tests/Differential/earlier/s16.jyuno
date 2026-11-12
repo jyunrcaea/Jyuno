@@ -1,0 +1,8 @@
+func f
+    param a
+    param b
+    return (add a b)
+endfunc
+console.writeline (f 1 2 3)
+console.writeline (f "a" "b")
+console.writeline (f 1)

@@ -1,0 +1,16 @@
+func f
+  param n
+  return (g (add n 1))
+endfunc
+func g
+  param n
+  return (f (h n))
+endfunc
+func h
+  param n
+  if (equal (mod n 50) 0)
+    console.writeline n
+  end
+  return n
+endfunc
+f 0

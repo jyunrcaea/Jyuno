@@ -1,0 +1,18 @@
+struct pt
+    param x
+endstruct
+a = pt 1
+func bump
+    a.x = add a.x 1
+    return a
+endfunc
+console.writeline (equal a (bump))
+b = pt 3
+console.writeline (equal a b)
+console.writeline (equal b b)
+console.writeline (not a)
+console.writeline (and a b)
+console.writeline (or a 0)
+x = or a 0
+console.writeline x
+console.writeline (less a b)

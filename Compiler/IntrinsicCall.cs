@@ -169,6 +169,8 @@ public partial class Interpreter
             c = arity > 2 ? eval(2) : null!;
             borrowed_a = borrowed(0);
             borrowed_b = arity is 2 && borrowed(1);
+            //뒤의 인자가 프로그램이 제공한 변수라면 읽을 때 C# 코드가 실행됨 (그 코드가 ExecuteLine() 등으로 빌린 값을 바꿀수 있음)
+            hosted_b = borrowed_a && arity is 2 ? arguments[1].Hosted : null;
         }
         readonly Interpreter owner;
         readonly NameSite site;
@@ -179,6 +181,8 @@ public partial class Interpreter
         readonly Func<object?> a, b, c;
         //복사하지 않고 빌린 인자인지 (구조체 값의 비교는 복사본끼리 비교하던 원래 결과와 같아야 함)
         readonly bool borrowed_a, borrowed_b;
+        //두번째 인자를 읽을 때 C# 코드가 실행되는지 (첫번째 인자를 빌렸을 때만 확인)
+        readonly Func<bool>? hosted_b;
 
         public object? Eval()
         {
@@ -199,6 +203,9 @@ public partial class Interpreter
                 case 2:
                 {
                     object? x = a();
+                    //빌린 구조체 값은 뒤의 인자를 계산하는 동안 바뀌면 안 되므로, 바뀔수 있다면 원래대로 복사
+                    if (x is StructInstance lent && hosted_b is not null && hosted_b())
+                        x = owner.read(lent);
                     object? y = b();
                     if ((borrowed_a || borrowed_b) && op is Intrinsic.Equal && x is StructInstance s && y is StructInstance t)
                         return box(StructInstance.Same(s , borrowed_a , t , borrowed_b));

@@ -1,0 +1,6 @@
+func g
+    param x
+    return x
+
+endfunc
+console.writeline (g 4)

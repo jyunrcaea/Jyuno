@@ -1,0 +1,12 @@
+struct pt
+    param x
+    param y
+endstruct
+struct box
+    param p
+    p.y =
+endstruct
+b = box (pt 1 2)
+console.writeline (string b)
+console.writeline b.p.x
+console.writeline b.p.y

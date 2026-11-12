@@ -1,0 +1,25 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+a = pt 1 2
+b = pt 1 2
+c = pt 1 3
+console.writeline (equal a b c)
+console.writeline (equal a b a)
+console.writeline (equal a a a)
+n = pt (host.nan) 1
+console.writeline (equal n n n)
+console.writeline (equal n n)

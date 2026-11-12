@@ -1,0 +1,25 @@
+#!dump
+struct bag
+  param a
+  param b
+endstruct
+shared = list 1
+func second
+  param x
+  param y
+  return x
+endfunc
+v1 = second (bag shared 1) (host.opt "escape" 0)
+list.push shared 2
+v2 = second (bag shared 2) (host.opt "escape" 1)
+list.push shared 3
+v3 = second (bag 3 4) (host.opt "escape" 0)
+v4 = second (bag 5 6) (host.opt "escape" 1)
+host.opt "inline" 0
+v5 = second (bag shared 7) (host.opt "inline" 1)
+list.push shared 4
+v6 = second (bag 1 shared) (host.opt "escape" 0)
+host.opt "escape" 1
+list.push shared 5
+console.writeline (host.show v1 v2 v3 v4 v5 v6 shared)
+return

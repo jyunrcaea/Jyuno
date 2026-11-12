@@ -1,0 +1,21 @@
+struct box
+    param n
+    for i (list 1 2)
+        func inner
+            return n
+        endfunc
+        t = i
+    end
+    if (equal n 1)
+        func only
+            n = add n 10
+            return n
+        endfunc
+    end
+endstruct
+b = box 1
+console.writeline (string b)
+console.writeline (b.only)
+c = b
+console.writeline (c.only)
+console.writeline (b.only)

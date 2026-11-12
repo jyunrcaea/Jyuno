@@ -1,0 +1,18 @@
+struct pt
+    param x
+endstruct
+struct box
+    param p
+endstruct
+q = pt 1
+b = box q
+q.x = 2
+console.writeline (string b)
+b.p = q
+q.x = 3
+console.writeline (string b)
+c = box (pt 9)
+d = c.p
+d.x = 10
+console.writeline (string c)
+console.writeline (string d)

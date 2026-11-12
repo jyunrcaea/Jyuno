@@ -1,0 +1,5 @@
+func f8
+  param a b
+  return a
+endfunc
+console.writeline (f8 1 2)

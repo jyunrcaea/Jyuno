@@ -1,0 +1,31 @@
+#!dump
+struct bag
+  param a
+  param b
+endstruct
+shared = list 1 2
+func second
+  param x
+  param y
+  return x
+endfunc
+func keepfirst
+  param x
+  param y
+  z = x
+  return z
+endfunc
+v = second (bag shared 1) (list.push shared 9)
+list.push shared 10
+w = keepfirst (bag 1 shared) (list.push shared 11)
+list.push shared 12
+u = second (bag 1 2) (list.push shared 13)
+console.writeline (host.show v w u shared)
+t = list (bag shared 1) (bag 1 2)
+list.push shared 14
+t0 = t 0
+t1 = t 1
+list.push shared 15
+console.writeline (host.show t t0 t1 shared)
+console.writeline (host.show (equal (bag shared 1) (bag shared 1)) (equal (bag 1 2) (bag 1 2)) (equal (bag shared 1) v))
+return

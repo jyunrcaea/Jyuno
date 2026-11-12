@@ -1,0 +1,10 @@
+struct s
+  param n
+  func down
+    param k
+    return (down (add k 1))
+  endfunc
+endstruct
+a = s 0
+console.writeline "start"
+a.down 0

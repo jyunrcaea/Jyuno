@@ -1,0 +1,6 @@
+func f
+    param x
+    return (host.cur)
+endfunc
+console.writeline (f 1)
+console.writeline (host.cur)

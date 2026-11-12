@@ -1,3 +1,4 @@
+using Jyuno.Language;
 using System.Globalization;
 
 namespace Jyuno.Tests;
@@ -240,5 +241,174 @@ public class OptimizationTests
             "func first" , "  param a" , "  return a.x" , "endfunc" , "p = pt 1" , "q = pt 2" , "out (first p q (pt 3))" ,
             "func none" , "  return 5" , "endfunc" , "out (none p q)" ,
             "func par" , "  param a" , "  return (a)" , "endfunc" , "r = par p" , "r.x = 10" , "out (string p)" , "out (string r)"));
+    }
+
+    //프로그램(C#)이 인터프리터를 직접 다루는 경우: 네 가지 조합이 모두 같은 결과를 내는지 확인하고, 그 결과를 돌려줌
+    static string RunHost(Func<bool , bool , string> scenario)
+    {
+        string expected = scenario(false , false);
+        Assert.Equal(expected , scenario(true , false));
+        Assert.Equal(expected , scenario(false , true));
+        Assert.Equal(expected , scenario(true , true));
+        return expected;
+    }
+
+    static string Text(object? value) => value switch {
+        null => "null" ,
+        System.Collections.IList list => string.Join("/" , list.Cast<object?>().Select(Text)) ,
+        _ => Convert.ToString(value , CultureInfo.InvariantCulture)!
+    };
+
+    [Fact]
+    public void Borrowed_StructArgument_IsCopiedBeforeHostVariableGetterRuns()
+    {
+        //비교의 두번째 인자가 프로그램이 제공한 변수라면, 그 변수를 읽는 C# 코드가 먼저 읽은 구조체 값을 바꿀수 있음
+        Assert.Equal("True/9/True/1/True/7" , RunHost((escape , inline) => {
+            Runtime runtime = new();
+            Interpreter interpreter = null!;
+            string? action = null;
+            runtime.AddFunction("arm" , args => action = (string?)args[0]);
+            //읽을 때마다 정해둔 줄을 실행하고 pt { x = 1 }을 돌려주는 변수
+            runtime.AddVariable("trap" , () => { if (action is not null) interpreter.ExecuteLine(action); return interpreter.ExecuteLine("(pt 1)"); } , _ => { });
+            interpreter = runtime.Create(new[] {
+                "struct pt" , "param x" , "endstruct" , "p = pt 1" , "q = pt 1" , "r = pt 1" ,
+                "arm 'p.x = 9'" , "a = equal p trap" , "b = p.x" ,
+                "func whole" , "param v" , "return (equal v trap)" , "endfunc" ,
+                "arm 'v.x = 5'" , "c = whole q" , "d = q.x" ,
+                "func inner" , "param v" , "return (equal v trap)" , "endfunc" ,
+                "func outer" , "param w" , "return (inner w)" , "endfunc" ,
+                "arm 'r.x = 7'" , "e = outer r" , "f = r.x" ,
+                "arm null" , "return (list a b c d e f)" });
+            interpreter.EscapeAnalysis = escape;
+            interpreter.Inlining = inline;
+            return Text(interpreter.Run());
+        }));
+    }
+
+    [Fact]
+    public void Inlined_FunctionBodyReplacedBetweenRuns_UsesNewLines()
+    {
+        //프로그램이 실행 사이에 scripts의 줄을 바꾸면, 이미 만들어진 함수도 바뀐 줄을 실행해야 함
+        Assert.Equal("2,101,101" , RunHost((escape , inline) => {
+            Interpreter interpreter = new Runtime().Create(new[] { "func f" , "param p" , "return (add p 1)" , "endfunc" , "x = f 1" });
+            interpreter.EscapeAnalysis = escape;
+            interpreter.Inlining = inline;
+            interpreter.Run();
+            string result = Text(interpreter.ExecuteLine("x"));
+            interpreter.scripts[2] = new CommandLine("return (add p 100)");
+            result += "," + Text(interpreter.ExecuteLine("(f 1)"));
+            interpreter.Run(4);
+            return result + "," + Text(interpreter.ExecuteLine("x"));
+        }));
+    }
+
+    [Fact]
+    public void Inlined_LinesInsertedBetweenRuns_AreNotServedFromOldShape()
+    {
+        Assert.Equal("2,null,13" , RunHost((escape , inline) => {
+            Interpreter interpreter = new Runtime().Create(new[] { "func f" , "param p" , "return (add p 1)" , "endfunc" , "x = f 1" });
+            interpreter.EscapeAnalysis = escape;
+            interpreter.Inlining = inline;
+            interpreter.Run();
+            string result = Text(interpreter.ExecuteLine("x"));
+            //줄이 밀려서 원래 함수는 param 두 줄만 실행하게 됨
+            interpreter.scripts.Insert(1 , new CommandLine("param q"));
+            result += "," + Text(interpreter.ExecuteLine("(f 1 2)"));
+            //다시 실행하면 새로 정의된 함수가 사용됨
+            interpreter.scripts[5] = new CommandLine("x = f 10 12");
+            interpreter.Run();
+            return result + "," + Text(interpreter.ExecuteLine("x"));
+        }));
+    }
+
+    [Fact]
+    public void Inlined_HostCallsRunAgain_ParametersStayVisible()
+    {
+        //인라인된 함수 안에서 C# 함수가 Run()을 다시 호출해도, 함수의 파라미터는 그대로여야 함
+        Assert.Equal("1/9/77/78" , RunHost((escape , inline) => {
+            Runtime runtime = new();
+            Interpreter interpreter = null!;
+            runtime.AddFunction("rerun" , args => interpreter.Run((int)(long)args[0]!));
+            interpreter = runtime.Create(new[] { "func f" , "param p" , "return (list p (rerun 5) p (add p 1))" , "endfunc" , "return 0" , "p = 77" , "return 9" });
+            interpreter.EscapeAnalysis = escape;
+            interpreter.Inlining = inline;
+            interpreter.Run();
+            return Text(interpreter.ExecuteLine("(f 1)"));
+        }));
+    }
+
+    [Fact]
+    public void Inlined_HostCallsRunAgain_LoopStateIsSeparate()
+    {
+        //함수 안의 for/repeat 도중에 호출한 인라인된 함수에서 C# 함수가 같은 줄부터 Run()을 다시 호출해도, 바깥 반복문의 진행 상태와 섞이면 안 됨
+        foreach (string loop in new[] { "for i (list 1 2 3)" , "repeat 3" })
+        {
+            foreach (string ret in new[] { "return (rerun 6)" , "return (unused = rerun 6)" })
+            {
+                string result = RunHost((escape , inline) => {
+                    Runtime runtime = new();
+                    Interpreter interpreter = null!;
+                    List<string> log = new();
+                    bool again = false;
+                    runtime.AddFunction("log" , args => { log.Add(Text(args[0])); return null; });
+                    runtime.AddFunction("rerun" , args => {
+                        if (again)
+                            return -1L;
+                        again = true;
+                        try { return interpreter.Run((int)(long)args[0]!); }
+                        finally { again = false; }
+                    });
+                    interpreter = runtime.Create(new[] {
+                        "func g" , "param p" , ret , "endfunc" ,
+                        "func outer" , "param q" , loop , "log 'in'" , "k = g 1" , "log 'out'" , "end" , "return 1" , "endfunc" });
+                    interpreter.EscapeAnalysis = escape;
+                    interpreter.Inlining = inline;
+                    interpreter.Run();
+                    return Text(interpreter.ExecuteLine("(outer 5)")) + " " + string.Join("" , log.Select(o => o[0]));
+                });
+                //바깥 반복문은 세번 모두 돌고, 그때마다 다시 실행한 반복문도 세번씩 돎
+                Assert.Equal("1 iioioiooiioioiooiioioioo" , result);
+            }
+        }
+    }
+
+    [Fact]
+    public void Inlined_HostCallsRunAgain_ParamReadsArgumentsOfInlinedCall()
+    {
+        //인라인된 함수 안에서 다시 실행한 줄이 param이라면, 그 함수가 받은 인자를 읽어야 함 (기록된 값이 2)
+        foreach (string ret in new[] { "return (list p (rerun 6))" , "return (unused = list p (rerun 6))" })
+        {
+            Assert.EndsWith(" 2" , RunHost((escape , inline) => {
+                Runtime runtime = new();
+                Interpreter interpreter = null!;
+                List<string> log = new();
+                runtime.AddFunction("log" , args => { log.Add(Text(args[0])); return null; });
+                runtime.AddFunction("rerun" , args => interpreter.Run((int)(long)args[0]!));
+                interpreter = runtime.Create(new[] {
+                    "func f" , "param p" , ret , "endfunc" ,
+                    "func k" , "param y" , "param z" , "log z" , "return 9" , "endfunc" });
+                interpreter.EscapeAnalysis = escape;
+                interpreter.Inlining = inline;
+                interpreter.Run();
+                return Text(interpreter.ExecuteLine("(f 1 2)")) + " " + string.Join("," , log);
+            }));
+        }
+    }
+
+    [Fact]
+    public void ValuesReturnedToHost_AreSeparateFromScriptValues()
+    {
+        Assert.Equal("1,2" , RunHost((escape , inline) => {
+            Interpreter interpreter = new Runtime().Create(new[] { "struct bag" , "param l" , "endstruct" , "v = bag (list 1 2)" , "func f" , "param p" , "return p" , "endfunc" });
+            interpreter.EscapeAnalysis = escape;
+            interpreter.Inlining = inline;
+            interpreter.Run();
+            foreach (string line in new[] { "v" , "(f v)" , "(bag (list 3))" , "(f (bag (list 4)))" })
+            {
+                StructValue value = (StructValue)interpreter.ExecuteLine(line)!;
+                ((System.Collections.IList)value["l"]!).Add(99L);
+            }
+            return Text(interpreter.ExecuteLine("(list.join v.l ',')"));
+        }));
     }
 }

@@ -1,0 +1,15 @@
+struct pt
+  param x
+endstruct
+a = pt 1
+struct pt
+  param x
+endstruct
+b = pt 1
+console.writeline (equal a b)
+console.writeline (equal a a)
+c = a
+console.writeline (equal a c)
+l = list a b
+console.writeline (list.contains l (pt 1))
+console.writeline (list.indexof l b)

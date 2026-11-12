@@ -1,0 +1,23 @@
+struct s
+  param x
+  func bump
+    x = add x 1
+    return x
+  endfunc
+  bump
+  y = bump
+  func drop
+    y =
+  endfunc
+  if (greater x 10)
+    drop
+  end
+endstruct
+a = s 1
+b = s 20
+console.writeline (host.show a b)
+c = b
+console.writeline (host.show c)
+console.writeline (equal b c)
+b.bump
+console.writeline (host.show b c)

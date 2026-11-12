@@ -1,0 +1,36 @@
+#!dump
+struct bag
+  param a
+  param b
+endstruct
+shared = list 1
+func twice
+  n = 0
+  out = list
+  while (less n 2)
+    param p
+    list.push out (host.show p)
+    p.b = add p.b 100
+    list.push shared (add 50 n)
+    n = add n 1
+  end
+  return (list out p)
+endfunc
+r1 = twice (bag shared 1)
+r2 = twice (bag 2 3)
+console.writeline (host.show r1 r2 shared)
+tries = 0
+func again
+  again:
+  param p
+  if (less tries 3)
+    tries = add tries 1
+    p.b = add p.b tries
+    list.push shared p.b
+    goto again
+  end
+  tries = 0
+  return p
+endfunc
+console.writeline (host.show (again (bag shared 0)) (again (bag 4 0)) shared)
+return

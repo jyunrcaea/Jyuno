@@ -1,0 +1,32 @@
+struct pt
+    param x
+endstruct
+p = pt 1
+l = list
+l2 = add l p
+q = pt 5
+l2 = add l2 q (pt 6)
+for e l2
+    e.x = 99
+end
+for e l2
+    console.writeline (string e)
+end
+l3 = list 0
+l3 0 p
+z = l3 0
+z.x = 77
+console.writeline (string (l3 0))
+console.writeline (string p)
+w = (l2 0)
+w.x = 31
+console.writeline (string (l2 0))
+l3 0 (pt 40)
+y = l3 0
+y.x = 41
+console.writeline (string (l3 0))
+arr = array.new 2
+arr 1 (pt 50)
+k = arr 1
+k.x = 51
+console.writeline (string (arr 1))

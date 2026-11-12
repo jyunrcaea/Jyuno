@@ -1,0 +1,30 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct s
+  mk = 0
+  func make
+    param a
+    mk = add mk 1
+    return (pt a mk)
+  endfunc
+endstruct
+f = s
+a = f.make 1
+b = f.make 2
+g = f
+c = g.make 3
+console.writeline (host.show a b c f g)

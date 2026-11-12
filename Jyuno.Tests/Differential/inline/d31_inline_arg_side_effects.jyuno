@@ -1,0 +1,31 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+log = list
+func note
+  param v
+  list.push log v
+  return v
+endfunc
+func three
+  param a
+  param b
+  param c
+  return (list c a b (note 4))
+endfunc
+console.writeline (host.show (three (note 1) (note 2) (note 3)) log)
+console.writeline (host.show (three (note 1)) log)
+console.writeline (host.show (three (note 1) (note 2) (note 3) (note 9) (note (pt 1 2))) log)

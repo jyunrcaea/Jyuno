@@ -1,0 +1,39 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func same
+  param p
+  return (equal p p)
+endfunc
+func same2
+  param p
+  param q
+  return (equal p q)
+endfunc
+nan = host.nan
+n = pt nan 1
+console.writeline (same n)
+console.writeline (same (pt nan 1))
+console.writeline (same2 n n)
+console.writeline (same (pt 1 1))
+console.writeline (same2 (pt 1 1) (pt 1 1))
+l = list n
+console.writeline (same (l 0))
+console.writeline (same2 (l 0) (l 0))
+console.writeline (equal (l 0) (l 0))
+console.writeline (same (host.keep n))
+console.writeline (same2 (host.get) (host.get))
+console.writeline (equal (host.get) (host.get))

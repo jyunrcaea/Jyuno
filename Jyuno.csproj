@@ -11,7 +11,7 @@
   <!-- NuGet 패키지 정보 (버전은 릴리즈 워크플로우에서 태그로 지정) -->
   <PropertyGroup>
     <PackageId>Jyuno</PackageId>
-    <Version>1.5.2</Version>
+    <Version>1.5.3</Version>
     <Authors>jyunrcaea</Authors>
     <Description>Interpreter for Jyuno, a small and lightweight language for easily adding safe plugin (scripting) support to C# programs.</Description>
     <PackageTags>jyuno;script;scripting;interpreter;plugin;language</PackageTags>

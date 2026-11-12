@@ -1,0 +1,55 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func pos
+  param p
+  return (greater p.x 0)
+endfunc
+func cnt
+  param p
+  return p.x
+endfunc
+func items
+  param p
+  return (list p p.x p.y)
+endfunc
+func lbl
+  param l
+  return l
+endfunc
+a = pt 3 0
+while (pos a)
+  a.move -1
+  if (pos a)
+    console.writeline (host.show a)
+  end
+end
+a.x = 2
+repeat (cnt a)
+  console.writeline "r"
+  a.move 5
+end
+for e (items a)
+  console.writeline (host.show e)
+  a.move 1
+end
+n = 0
+here:
+n = add n 1
+if (less n 3)
+  goto (lbl here)
+end
+console.writeline (host.show n a)

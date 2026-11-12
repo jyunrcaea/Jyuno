@@ -1,0 +1,28 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+host.var = pt 1 2
+a = pt 1 2
+console.writeline (equal a host.var)
+console.writeline (equal host.var a)
+console.writeline (equal host.var host.var)
+t = host.var
+t.x = 5
+console.writeline (host.show host.var t)
+host.var = t
+t.y = 6
+console.writeline (host.show host.var t)
+console.writeline (equal host.var t)

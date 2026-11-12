@@ -29,6 +29,8 @@ public partial class Interpreter
         public readonly Scope Scope;
         //struct와 endstruct 사이에 다른 struct가 있는지 (그 구조체의 값은 이 구조체 값의 영역을 바깥 영역으로 가짐)
         public readonly bool HasInnerStruct;
+        //[실험] 탈출 분석: 지난번에 배열/리스트를 담고 있던 필드 (생성자의 결과를 그대로 쓸수 없는 가장 흔한 이유이므로 먼저 확인)
+        public string? ListField;
         public JyunoStructType Rebind(Scope scope) => new(interpreter , Name , Line , End , scope , HasInnerStruct);
         //같은 struct 줄에서 만든 구조체인지
         public bool SameDefinition(JyunoStructType other) => Line == other.Line && interpreter == other.interpreter;
@@ -65,6 +67,9 @@ public partial class Interpreter
         //이런 값을 변수에 넣을 때는 다시 복사하지 않고 그대로 넣음 (소유권 이전)
         //C# 프로그램에 넘어가거나 배열/리스트에 담기면 false가 됨 (escape)
         public bool Fresh;
+        //생성자의 결과: 복사본과 같은 모양인지(copy_equivalent) 아직 확인하지 않음
+        //(C# 함수나 리스트로 바로 넘어가는 값은 확인할 필요가 없으므로, 변수에 넣을 때 확인)
+        public bool Unverified;
 
         public override string TypeName => Type.Name;
         public override IReadOnlyList<string> FieldNames => Members.Where(o => Scope.Variables.TryGetValue(o , out object? holder) && holder is VariableInterface).ToArray();
@@ -160,8 +165,9 @@ public partial class Interpreter
         //생성자의 return은 생성자를 끝내기만 함 (반환한 값은 무시)
         call_function(type.Line , type.End , scope , args);
         instance.Members = scope.Variables.Keys.Where(o => scope.Aliases is null || !scope.Aliases.ContainsKey(o)).ToArray();
-        //복사본과 똑같은 모양일 때만 방금 만들어진 값으로 봄 (아니라면 변수에 넣을 때 원래대로 복사)
-        instance.Fresh = EscapeAnalysis && copy_equivalent(instance);
+        //복사본과 똑같은 모양일 때만 방금 만들어진 값으로 봄 (아니라면 변수에 넣을 때 원래대로 복사, take에서 확인)
+        //생성자가 끝난 뒤로 변수에 담기기 전까지는 이 값을 바꿀수 있는 이름이 없으므로, 나중에 확인해도 결과가 같음
+        instance.Fresh = instance.Unverified = EscapeAnalysis;
         return instance;
     }
 
@@ -174,6 +180,9 @@ public partial class Interpreter
         if (instance.Type.HasInnerStruct)
             return false;
         Scope scope = instance.Scope;
+        if (instance.Type.ListField is string hint && scope.Variables.TryGetValue(hint , out object? hinted) && hinted is JyunoVariable field
+            && field.Get() is IList shared && is_cloned(shared) && (scope.Aliases is null || !scope.Aliases.ContainsKey(hint)))
+            return false;
         int aliases = 0;
         foreach (string member in instance.Members)
         {
@@ -209,6 +218,7 @@ public partial class Interpreter
                             }
                             break;
                         case IList list when is_cloned(list):
+                            instance.Type.ListField = member;
                             return false;
                     }
                     break;
@@ -236,7 +246,11 @@ public partial class Interpreter
         if (instance.Fresh)
         {
             instance.Fresh = false;
-            return instance;
+            if (!instance.Unverified)
+                return instance;
+            instance.Unverified = false;
+            if (copy_equivalent(instance))
+                return instance;
         }
         return copy_struct(instance , null);
     }
@@ -433,7 +447,8 @@ public partial class Interpreter
         }
     }
     //구조체 값을 복사할 때 따로 복사되는 컬렉션인지 (배열과 List<T>, 프로그램이 제공한 다른 컬렉션은 그대로 공유)
-    static bool is_cloned(IList list) => list is Array array ? array.Rank is 1 : list.GetType() is { IsGenericType: true } type && type.GetGenericTypeDefinition() == typeof(List<>);
+    static bool is_cloned(IList list) => list is List<object?> or List<long> or List<double> or List<string> or List<bool>
+        || (list is Array array ? array.Rank is 1 : list.GetType() is { IsGenericType: true } type && type.GetGenericTypeDefinition() == typeof(List<>));
     static Type element_type(IList cloned) => cloned is Array ? cloned.GetType().GetElementType()! : cloned.GetType().GetGenericArguments()[0];
     //원소 타입이 구조체 값이나 컬렉션을 담을수 있는지 (long, string 등은 복사할 필요 없음)
     static bool needs_copy(Type element) => !(element.IsValueType || element == typeof(string));

@@ -1,0 +1,37 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct odd
+  param p
+  p.y =
+  q = p
+  l = list p
+endstruct
+func f
+  param o
+  return (list o o.p o.q (o.p.move 1) o o.l)
+endfunc
+func h
+  param o
+  return o
+endfunc
+console.writeline (host.show (f (odd (pt 1 2))) (h (odd (pt 3 4))))
+x = h (odd (pt 5 6))
+console.writeline (host.show x x.p.y)
+y = h (h (h (odd (pt 7 8))))
+y.l 0 5
+z = y
+console.writeline (host.show y z z.p.y)

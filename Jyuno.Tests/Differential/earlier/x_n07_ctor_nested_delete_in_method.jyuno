@@ -1,0 +1,21 @@
+struct inner
+    param v
+    param w
+    func drop
+        w =
+    endfunc
+endstruct
+struct mid
+    param i
+    i.drop
+endstruct
+struct outer
+    param m
+endstruct
+o = outer (mid (inner 1 2))
+console.writeline (string o)
+p = o
+console.writeline (string p)
+q = mid (inner 3 4)
+console.writeline (string q)
+console.writeline q.i.v

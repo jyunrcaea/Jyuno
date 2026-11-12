@@ -1,0 +1,6 @@
+struct s
+  param n
+  console.writeline n
+  child = s (add n 1)
+endstruct
+a = s 0

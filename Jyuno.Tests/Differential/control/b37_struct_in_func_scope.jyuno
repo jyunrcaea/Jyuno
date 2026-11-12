@@ -1,0 +1,24 @@
+func mk
+  param n
+  struct loc
+    param v
+    func get
+      return (add v n)
+    endfunc
+  endstruct
+  a = loc 1
+  b = a
+  n = add n 100
+  return (list a b (a.get) (loc 5))
+endfunc
+r = mk 10
+console.writeline (host.show r)
+x = r 0
+console.writeline (x.get)
+y = r 3
+console.writeline (y.get)
+z = y
+console.writeline (z.get)
+console.writeline (equal y z)
+r2 = mk 10
+console.writeline (equal (r 0) (r2 0))

@@ -1,0 +1,57 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct weird
+  b.c = 1
+endstruct
+struct holder
+  param mode
+  if (equal mode 0)
+    a.b = pt 10 20
+    a = weird
+  end
+  if (equal mode 1)
+    a = weird
+    a.b = pt 10 20
+  end
+  if (equal mode 2)
+    a = weird
+    a.b.c = 5
+    local a.b.c = 6
+  end
+  if (equal mode 3)
+    a = pt 1 2
+    a.z = 3
+  end
+  if (equal mode 4)
+    a.z = 3
+    a = pt 1 2
+  end
+  func peek
+    return (host.show a)
+  endfunc
+endstruct
+m = 0
+while (less m 5)
+  h = holder m
+  g = h
+  console.writeline (host.show h g (equal h g))
+  console.writeline (h.peek)
+  console.writeline (g.peek)
+  h2 = holder m
+  console.writeline (equal h h2)
+  m = add m 1
+end

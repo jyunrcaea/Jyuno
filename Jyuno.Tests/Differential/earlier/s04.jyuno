@@ -1,0 +1,7 @@
+func m
+    param a
+    return a b c
+endfunc
+b = 3
+console.writeline (m 4)
+console.writeline (m)

@@ -236,6 +236,15 @@ public partial class Interpreter : IDisposable
         if (running)
             throw new JyunoException("이미 실행중입니다.");
         running = true;
+        //인라인된 호출 도중에 C# 함수가 Run()을 호출했다면 ExecuteLine()처럼 함수 영역을 먼저 만듦
+        materialize_inline();
+        //인라인된 호출은 호출 프레임을 만들지 않으므로, 그 안에서 다시 실행한다면 프레임을 만들어 둠 (반복문의 상태가 바깥 호출과 섞이지 않도록)
+        bool frameless = inline_depth > (frames.Count > 0 ? frames.Peek().InlineDepth : 0);
+        if (frameless)
+        {
+            inline_depth--;
+            frames.Push(new CallFrame(inline_args , inline_depth));
+        }
         //스크립트가 바뀌었을수 있으므로 블록 정보를 새로 계산
         blocks = null;
         top_repeat_counts.Clear();
@@ -269,6 +278,11 @@ public partial class Interpreter : IDisposable
             current = top;
             top_for_states.Clear();
             CurrentExecuteLine = -1;
+            if (frameless)
+            {
+                frames.Pop();
+                inline_depth++;
+            }
         }
     }
     object? execute_line(int line , bool flow)
@@ -537,11 +551,14 @@ public partial class Interpreter : IDisposable
     //함수 호출 정보 (인자, 반복 횟수)
     sealed class CallFrame
     {
-        public CallFrame(object?[] args)
+        public CallFrame(object?[] args , int inline_depth)
         {
             Args = args;
+            InlineDepth = inline_depth;
         }
         public readonly object?[] Args;
+        //이 호출이 시작될 때 진행중이던 인라인된 호출의 수 (이보다 많다면 가장 안쪽의 호출은 프레임이 없는 인라인된 호출)
+        public readonly int InlineDepth;
         public readonly Dictionary<int , long> RepeatCounts = new();
         public readonly Dictionary<int , ForState> ForStates = new();
     }
@@ -565,7 +582,7 @@ public partial class Interpreter : IDisposable
         public readonly Scope Scope;
         //같은 함수를 다른 영역에 만듦 (구조체 값을 복사할때 사용)
         public JyunoFunction Rebind(Scope scope) => new(interpreter , line , end , scope) { shape = shape , shape_known = shape_known };
-        //[실험] 인라이닝: 본문의 모양 (줄의 내용은 바뀌지 않으므로 한번만 계산)
+        //[실험] 인라이닝: 본문의 모양 (한번만 계산하고, 호출할 때마다 본문의 줄이 그대로인지만 확인)
         InlineShape? shape;
         bool shape_known;
         //스크립트 안에서의 호출
@@ -573,7 +590,8 @@ public partial class Interpreter : IDisposable
         {
             if (interpreter.Inlining)
             {
-                if (!shape_known)
+                //프로그램이 scripts의 줄을 바꿨다면 본문의 모양을 다시 계산
+                if (!shape_known || (shape is not null && !shape.Matches(interpreter.scripts)))
                 {
                     shape = interpreter.inline_shape(line , end);
                     shape_known = true;
@@ -616,7 +634,7 @@ public partial class Interpreter : IDisposable
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         InlineShape? outer_frame = inline_frame;
-        frames.Push(new CallFrame(args));
+        frames.Push(new CallFrame(args , inline_depth));
         current = body;
         inline_frame = null;
         try
@@ -643,13 +661,31 @@ public partial class Interpreter : IDisposable
     //param 줄들과 return 한 줄로만 된 함수의 모양 (func 줄 → 모양, 인라인할수 없다면 null)
     sealed class InlineShape
     {
-        public InlineShape((int Line, int Index, string Name)[] parameters , int ret)
+        public InlineShape((int Line, int Index, string Name)[] parameters , int ret , int first , CommandLine[] lines)
         {
             Params = parameters;
             Return = ret;
+            First = first;
+            Lines = lines;
         }
         public readonly (int Line, int Index, string Name)[] Params;
         public readonly int Return;
+        //이 모양을 계산한 줄들 (func 줄부터 endfunc 줄까지)
+        public readonly int First;
+        public readonly CommandLine[] Lines;
+        //scripts의 줄이 모양을 계산했을 때와 같은지 (scripts는 공개된 목록이므로 프로그램이 실행 사이에 줄을 바꾸거나 끼워넣을수 있음)
+        public bool Matches(List<CommandLine> scripts)
+        {
+            CommandLine[] lines = Lines;
+            if (scripts.Count < First + lines.Length)
+                return false;
+            for (int i = 0 ; i < lines.Length ; i++)
+            {
+                if (!ReferenceEquals(scripts[First + i] , lines[i]))
+                    return false;
+            }
+            return true;
+        }
         //영역을 만들지 않고 인자를 바로 읽는 return 식 (인라인할수 없는 식이라면 null)
         public Func<object?>? Direct;
         public bool DirectCompiled;
@@ -685,7 +721,12 @@ public partial class Interpreter : IDisposable
         Func<object?> eval = () => inline_frame is not null ? read(slot()) : normal_eval();
         if (normal.Borrow is not Func<object?> normal_borrow)
             return new Expr(eval) { MayEndEarly = normal.MayEndEarly };
-        return new Expr(eval) { Borrow = () => inline_frame is null ? normal_borrow() : EscapeAnalysis ? slot() : read(slot()) };
+        Func<bool>? normal_hosted = normal.Hosted;
+        return new Expr(eval) {
+            Borrow = () => inline_frame is null ? normal_borrow() : EscapeAnalysis ? slot() : read(slot()) ,
+            //인자를 바로 읽는 동안에는 C# 코드가 실행되지 않음
+            Hosted = normal_hosted is null ? null : () => inline_frame is null && normal_hosted()
+        };
     }
     //인라인된 호출(영역을 만들지 않은 호출)이 진행중일때 C# 함수가 ExecuteLine()을 호출했다면, 그 줄이 함수 영역에서 실행되도록 영역을 만듦
     //(이 뒤로는 파라미터도 이 영역의 변수에서 읽음)
@@ -752,7 +793,7 @@ public partial class Interpreter : IDisposable
 
     InlineShape? inline_shape(int line , int end)
     {
-        if (inline_shapes.TryGetValue(line , out InlineShape? shape))
+        if (inline_shapes.TryGetValue(line , out InlineShape? shape) && (shape is null || shape.Matches(scripts)))
             return shape;
         BlockMap map = get_blocks();
         shape = null;
@@ -784,7 +825,7 @@ public partial class Interpreter : IDisposable
             }
         }
         if (ok && ret >= 0)
-            shape = new InlineShape(parameters.ToArray() , ret);
+            shape = new InlineShape(parameters.ToArray() , ret , line , scripts.GetRange(line , end - line + 1).ToArray());
         inline_shapes[line] = shape;
         return shape;
     }
@@ -838,7 +879,9 @@ public partial class Interpreter : IDisposable
                 CurrentExecuteLine = current_line;
             }
         }
+        object?[] caller_args = inline_args;
         current = new Scope(function.Scope);
+        inline_args = args;
         inline_frame = null;
         inline_depth++;
         try
@@ -855,6 +898,7 @@ public partial class Interpreter : IDisposable
         finally
         {
             current = caller;
+            inline_args = caller_args;
             inline_frame = outer_frame;
             inline_depth--;
             CurrentExecuteLine = current_line;

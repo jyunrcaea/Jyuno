@@ -1,0 +1,12 @@
+struct node
+  param v
+  param next
+endstruct
+n = node 1 null
+n.next = n
+n.next.next = n
+n.v = 9
+console.writeline (host.show n)
+m = n.next
+m.next.v = 5
+console.writeline (host.show n m)

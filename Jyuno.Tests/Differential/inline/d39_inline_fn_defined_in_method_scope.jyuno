@@ -1,0 +1,15 @@
+struct s
+  param x
+  func run
+    param k
+    func helper
+      param v
+      return (add v x k)
+    endfunc
+    return (list (helper 1) (helper x))
+  endfunc
+endstruct
+a = s 10
+b = a
+b.x = 20
+console.writeline (host.show (a.run 1) (b.run 2))
