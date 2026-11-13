@@ -502,9 +502,9 @@ static class Program
             }
             case "typeshow":
             {
-                //typeshow <파일> [strict|pragmatic]: 한 파일의 검사 결과와 추론한 타입
+                //typeshow <파일> [strict|pragmatic|lenient]: 한 파일의 검사 결과와 추론한 타입
                 string[] lines = File.ReadAllText(args[1]).Replace("\r\n" , "\n").Split('\n');
-                TypeCheckLevel level = args.Length > 2 && args[2] is "pragmatic" ? TypeCheckLevel.Pragmatic : TypeCheckLevel.Strict;
+                TypeCheckLevel level = args.Length > 2 ? Enum.Parse<TypeCheckLevel>(args[2] , true) : TypeCheckLevel.Strict;
                 TypeCheckResult r = JyunoTypeChecker.Check(lines , Host("" , out _) , level , JyunoTypeChecker.JyunoWebHost);
                 foreach (var d in r.Errors) Console.WriteLine("오류 " + d);
                 foreach (var d in r.Warnings) Console.WriteLine("경고 " + d);
