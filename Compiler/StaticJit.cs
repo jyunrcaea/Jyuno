@@ -208,7 +208,7 @@ public partial class Interpreter
                     }
                     else
                     {
-                        if (!assign.Name.Candidates.Contains((0 , assign.Create))) throw new Unsupported("만들 칸이 후보에 없는 대입");
+                        if (assign.Create >= 0 && !assign.Name.Candidates.Contains((0 , assign.Create))) throw new Unsupported("만들 칸이 후보에 없는 대입");
                         foreach (Slot slot in slots) slot.IsVar = true;
                     }
                     classify(assign.Value);
@@ -216,6 +216,9 @@ public partial class Interpreter
                 }
                 case IrParen paren:
                     classify(paren.Inner);
+                    break;
+                case IrOperator op:
+                    foreach (IrExpr a in op.Operands) classify(a);
                     break;
                 case IrConstDef definition:
                     stack[^1].Slots[definition.Slot].IsVar = true;
@@ -405,6 +408,8 @@ public partial class Interpreter
                     Ty inner = type_of(paren.Inner);
                     return paren.Closed ? inner : Ty.Object;
                 }
+                case IrOperator op:
+                    return operator_type(op);
                 case IrConstDef definition:
                     widen(ref stack[^1].Slots[definition.Slot].Type , type_of(new IrConst(definition.Value)));
                     return Ty.Object;
@@ -621,6 +626,8 @@ public partial class Interpreter
                     return call_name(call);
                 case IrAssign assign:
                     return assign_name(assign);
+                case IrOperator op:
+                    return operator_expression(op);
                 case IrParen paren:
                 {
                     E inner = expression(paren.Inner);
@@ -699,6 +706,8 @@ public partial class Interpreter
                 E chain;
                 if (assign.Name.Import >= 0)
                     chain = E.Call(M_SetGlobal , E.Constant(imports[assign.Name.Import] , typeof(object)) , E.Constant(assign.Name.Name) , boxed(raw));
+                else if (assign.Create < 0)
+                    chain = fail($"'{assign.Name.Name}'은/는 알수없는 변수/함수 입니다." , typeof(void));
                 else
                 {
                     Slot create = slot_at(0 , assign.Create);

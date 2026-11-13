@@ -148,6 +148,8 @@ static class Program
                     if (expected != actual)
                     {
                         mismatched++;
+                        if (Environment.GetEnvironmentVariable("FUZZ_DUMP") is string dump)
+                            File.AppendAllText(dump , JsonSerializer.Serialize(new { code , expected = expected.ToString() , actual = actual.ToString() }) + "\n");
                         if (mismatched <= 5)
                         {
                             Console.WriteLine("──────── 불일치");

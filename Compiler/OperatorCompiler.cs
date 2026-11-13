@@ -10,7 +10,7 @@ namespace Jyuno;
 //구조체는 'func +'처럼 연산자 이름의 구조체 함수를 만들어서 연산자를 다시 정의(오버로딩)할수 있음 (왼쪽 값의 구조체 함수를 오른쪽 값을 인자로 호출)
 public partial class Interpreter
 {
-    enum Op : byte
+    internal enum Op : byte
     {
         Add, Sub, Mul, Div, Mod, Shl, Shr, Lt, Gt, Le, Ge, Eq, Ne, BitAnd, BitXor, BitOr, AndAlso, OrElse, Coalesce,
         Plus, Neg, Not, Complement
@@ -379,6 +379,37 @@ public partial class Interpreter
             if (derived is bool value)
                 return box(value);
         }
+        return plain_binary(op , x , y);
+    }
+
+    //─────────── 제한 모드 엔진 (클로저, IL, C#)이 쓰는 계산 ───────────
+    //제한 모드는 구조체를 거부하므로 다시 정의한 연산자가 없음 (&&, ||, ??, ?:는 단락 평가라서 엔진이 직접 만듦)
+
+    internal static bool IsOperatorSymbol(string symbol) => symbol is "?:" or "&&" or "||" or "??"
+        || (symbol.StartsWith('u') ? symbol[1..] is "+" or "-" or "!" or "~" : symbol is "+" or "-" or "*" or "/" or "%" or "<<" or ">>" or "<" or ">" or "<=" or ">=" or "==" or "!=" or "&" or "^" or "|");
+
+    /// <summary>제한 모드 IR의 연산자 기호 (이항 "+", 단항 "u-")</summary>
+    internal static Op OperatorOf(string symbol) => symbol.StartsWith('u') ? unary_op(symbol[1..]) : binary_op(symbol);
+
+    internal static object? StaticBinary(Op op , object? x , object? y) => plain_binary(op , x , y);
+    internal static object? StaticUnary(Op op , object? x) => plain_unary(op , x);
+    internal static object StaticBool(bool value) => box(value);
+
+    static object? plain_binary(Op op , object? x , object? y)
+    {
+        if (x is long a && y is long b)
+        {
+            switch (op)
+            {
+                case Op.Add: return unchecked(a + b);
+                case Op.Sub: return unchecked(a - b);
+                case Op.Mul: return unchecked(a * b);
+                case Op.Div: if (b != 0 && !(a == long.MinValue && b == -1)) return a / b; break;
+                case Op.Mod: if (b != 0 && !(a == long.MinValue && b == -1)) return a % b; break;
+                case Op.Lt: return box(a < b);
+                case Op.Eq: return box(a == b);
+            }
+        }
         switch (op)
         {
             case Op.Add: return builtin(JyunoCommands.Add , x , y);
@@ -434,6 +465,32 @@ public partial class Interpreter
         //구조체 값이 다시 정의한 연산자: 인자 없이 호출
         if (try_overload(x , symbol_of(op) , Array.Empty<object?>() , out object? result))
             return result;
+        return plain_unary(op , x);
+    }
+
+    static object? plain_unary(Op op , object? x)
+    {
+        switch (op)
+        {
+            case Op.Not:
+                if (x is bool b)
+                    return box(!b);
+                break;
+            case Op.Neg:
+                if (x is long l)
+                    return unchecked(-l);
+                if (x is double d)
+                    return -d;
+                break;
+            case Op.Complement:
+                if (x is long c)
+                    return ~c;
+                break;
+            case Op.Plus:
+                if (x is long or double)
+                    return x;
+                break;
+        }
         switch (op)
         {
             case Op.Not:

@@ -228,6 +228,8 @@ public partial class Interpreter
                     return call_cs(call);
                 case IrAssign assign:
                     return assign_cs(assign);
+                case IrOperator op:
+                    return operator_cs(op);
                 case IrParen paren:
                 {
                     V inner = cs_expression(paren.Inner);
@@ -472,6 +474,8 @@ public partial class Interpreter
                     open("else");
                 if (assign.Name.Import >= 0)
                     line($"S.SetGlobal(i{assign.Name.Import} , {literal(assign.Name.Name)} , {cbox(raw)});");
+                else if (assign.Create < 0)
+                    line($"S.Fail<object>({literal($"'{assign.Name.Name}'은/는 알수없는 변수/함수 입니다.")});");
                 else
                 {
                     Slot create = slot_at(0 , assign.Create);
@@ -654,7 +658,7 @@ public partial class Interpreter
 
     /// <summary>[실험] C#으로 내보낸 제한 모드 프로그램이 쓰는 실행 도우미 (생성된 코드 전용)</summary>
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    public static class AotSupport
+    public static partial class AotSupport
     {
         public static object?[] Bind(byte[] image , Runtime host) => JyunoProgramImage.BindImports(image , host);
         public static T Fail<T>(string message) => throw new JyunoException(message);

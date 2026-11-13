@@ -254,8 +254,10 @@ public partial class Interpreter
                             ((JyunoVariable)holder).value = ret;
                         else if (holder is VariableInterface vi)
                             vi.Set(ret);
-                        else if (holder is null)
+                        else if (holder is null && create >= 0)
                             f.Slots[create] = new JyunoVariable(ret);
+                        else if (holder is null)
+                            throw new JyunoException($"'{name}'은/는 알수없는 변수/함수 입니다.");
                         else
                             throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
                         return early is null ? null : new EarlyEnd(null);
@@ -294,9 +296,52 @@ public partial class Interpreter
                         throw parenthesis_error();
                     };
                 }
+                case IrOperator op:
+                    return operator_expression(op);
                 default:
                     throw new InvalidOperationException($"알수 없는 식 {ir.Op}");
             }
+        }
+
+        //괄호 안의 식이 ')' 전에 끝났다면(EarlyEnd) 연산자를 계산하기 전에 오류 (Compiler/OperatorCompiler.cs의 operand)
+        internal static object? operand(object? value) => value is EarlyEnd ? throw parenthesis_error() : value;
+
+        //1.6.0 연산자 (Compiler/OperatorCompiler.cs와 같은 계산)
+        Eval operator_expression(IrOperator ir)
+        {
+            Eval[] o = list(ir.Operands);
+            Eval a = o[0];
+            switch (ir.Symbol)
+            {
+                case "&&":
+                {
+                    Eval b = o[1];
+                    return f => Parser.IsTrue(operand(a(f))) ? StaticBool(Parser.IsTrue(operand(b(f)))) : StaticBool(false);
+                }
+                case "||":
+                {
+                    Eval b = o[1];
+                    return f => Parser.IsTrue(operand(a(f))) ? StaticBool(true) : StaticBool(Parser.IsTrue(operand(b(f))));
+                }
+                case "??":
+                {
+                    Eval b = o[1];
+                    return f => operand(a(f)) ?? operand(b(f));
+                }
+                case "?:":
+                {
+                    Eval t = o[1], e = o[2];
+                    return f => Parser.IsTrue(operand(a(f))) ? operand(t(f)) : operand(e(f));
+                }
+            }
+            Op code = OperatorOf(ir.Symbol);
+            if (o.Length is 1)
+                return f => StaticUnary(code , operand(a(f)));
+            Eval y = o[1];
+            return f => {
+                object? left = operand(a(f));
+                return StaticBinary(code , left , operand(y(f)));
+            };
         }
 
         Eval call_expression(IrCall call)

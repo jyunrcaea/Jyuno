@@ -77,7 +77,7 @@ internal sealed class IrAssign : IrExpr
 {
     public IrAssign(IrName name , int create , IrExpr value) { Name = name; Create = create; Value = value; }
     public readonly IrName Name;
-    //없을 때 만들 칸 (지금 영역)
+    //없을 때 만들 칸 (지금 영역). -1이면 만들지 않음 (복합 대입: 읽기가 먼저 성공했으므로 항상 후보나 전역이 있음)
     public readonly int Create;
     public readonly IrExpr Value;
     public override IrOp Op => IrOp.Assign;
@@ -103,7 +103,7 @@ internal sealed class IrParen : IrExpr
     public readonly bool Closed;
     public override IrOp Op => Closed ? IrOp.Paren : IrOp.Unclosed;
 }
-//1.6.0 연산자 (a + b, -a, c ? a : b). 타입 검사에서만 만듦 (제한 모드 실행 엔진은 아직 지원하지 않음)
+//1.6.0 연산자 (a + b, -a, c ? a : b). 구조체는 제한 모드에서 거부되므로 연산자를 다시 정의한 경우는 없음
 internal sealed class IrOperator : IrExpr
 {
     public IrOperator(string symbol , IrExpr[] operands) { Symbol = symbol; Operands = operands; }
@@ -187,8 +187,8 @@ internal sealed class IrBuilder
         objects = profile.Global;
     }
 
-    /// <param name="operators">1.6.0 연산자를 IrOperator로 만들지 (타입 검사용). false라면 제한 모드 오류</param>
-    public static IrProgram Build(IReadOnlyList<string> lines , Runtime profile , bool operators = false)
+    /// <param name="operators">1.6.0 연산자를 IrOperator로 만들지. false라면 제한 모드 오류</param>
+    public static IrProgram Build(IReadOnlyList<string> lines , Runtime profile , bool operators = true)
     {
         ScriptAnalysis analysis = ScriptAnalysis.Analyze(lines);
         IrBuilder builder = new(analysis , profile , operators);
@@ -483,11 +483,13 @@ internal sealed class IrBuilder
             case CompoundAssignExpression compound:
             {
                 //x += v 는 x = x + v
-                IrExpr value = new IrOperator(compound.Operator , new[] { new IrRead(name(compound.Name , scope)) , expression(compound.Value , scope , line) });
-                //영역에 없는 이름이라면 읽을 때 오류 (대입할 칸을 만들지 않음)
+                //지금 값은 인자 없는 호출로 읽음 (없을 때의 오류가 인터프리터의 compile_call과 같도록)
+                IrExpr value = new IrOperator(compound.Operator , new[] { new IrCall(name(compound.Name , scope) , Array.Empty<IrExpr>() , false , false) , expression(compound.Value , scope , line) });
+                //지금 영역에 없는 이름: 읽기가 먼저 성공했다면 바깥 영역 또는 전역의 그 이름에 씀 (만들 칸 없음, -1)
+                IrName target = name(compound.Name , scope);
                 if (!scope.Names.ContainsKey(compound.Name))
-                    return value;
-                return new IrAssign(name(compound.Name , scope) , slot_of(scope , compound.Name) , value);
+                    return target.Candidates.Length is 0 && target.Import < 0 ? value : new IrAssign(target , -1 , value);
+                return new IrAssign(target , slot_of(scope , compound.Name) , value);
             }
             case SyntaxErrorExpression syntax:
                 error(line , syntax.Message);

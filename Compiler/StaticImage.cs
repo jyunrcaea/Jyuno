@@ -30,8 +30,8 @@ public enum JyunoEngine
 public static class JyunoProgramImage
 {
     public static readonly byte[] Magic = { 0x89 , (byte)'J' , (byte)'Y' , (byte)'S' , 0x0D , 0x0A , 0x1A , 0x0A };
-    public const ushort FormatVersion = 2;
-    public const uint LanguageVersion = 0x0001_0400;
+    public const ushort FormatVersion = 3;
+    public const uint LanguageVersion = 0x0001_0600;
     const int HeaderSize = 32;
     //문장/식 중첩 깊이 제한 (재귀로 만들고 실행하므로 스택 오버플로를 막음)
     public const int MaxDepth = 512;
@@ -207,7 +207,7 @@ public static class JyunoProgramImage
                     break;
                 case IrAssign assign:
                     name(assign.Name);
-                    body.VarUInt((uint)assign.Create);
+                    body.VarUInt((uint)(assign.Create + 1));
                     expression(assign.Value);
                     break;
                 case IrConstDef definition:
@@ -219,6 +219,10 @@ public static class JyunoProgramImage
                     break;
                 case IrParen paren:
                     expression(paren.Inner);
+                    break;
+                case IrOperator op:
+                    body.VarUInt((uint)strings[op.Symbol]);
+                    expressions(op.Operands);
                     break;
             }
         }
@@ -494,7 +498,10 @@ public static class JyunoProgramImage
                 case IrOp.Assign:
                 {
                     IrName n = read_name();
-                    result = new IrAssign(n , slot(context.Frames[0]) , expression(line));
+                    int create = (int)r.VarULong() - 1;
+                    if (create >= context.Frames[0] || (create < 0 && n.Candidates.Length is 0 && n.Import < 0))
+                        throw bad("칸 번호가 영역의 크기를 벗어납니다.");
+                    result = new IrAssign(n , create , expression(line));
                     break;
                 }
                 case IrOp.ConstDef:
@@ -510,6 +517,16 @@ public static class JyunoProgramImage
                 case IrOp.Label: result = new IrLabel(slot(context.Frames[0]) , line); break;
                 case IrOp.Paren: result = new IrParen(expression(line) , true); break;
                 case IrOp.Unclosed: result = new IrParen(expression(line) , false); break;
+                case IrOp.Operator:
+                {
+                    string symbol = strings[r.Index(strings.Length)];
+                    IrExpr[] operands = expressions(line);
+                    int arity = symbol is "?:" ? 3 : symbol.StartsWith('u') ? 1 : 2;
+                    if (operands.Length != arity || !Interpreter.IsOperatorSymbol(symbol))
+                        throw bad("연산자 식이 올바르지 않습니다.");
+                    result = new IrOperator(symbol , operands);
+                    break;
+                }
                 default: throw bad("알수 없는 식 종류입니다.");
             }
             context.Depth--;

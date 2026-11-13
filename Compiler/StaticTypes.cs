@@ -596,7 +596,7 @@ sealed class TypeChecker
                     //다른 함수의 칸에 쓰면, 그 칸은 흐름을 따라가지 않고 프로그램 전체의 합으로 봄
                     if (s.Frame.Owner != resolving) s.Shared = true;
                 }
-                if (slots.Length > 0)
+                if (slots.Length > 0 && assign.Create >= 0)
                 {
                     SlotInfo create = slot_at(0 , assign.Create);
                     create.IsVar = true;
@@ -1196,7 +1196,7 @@ sealed class TypeChecker
                 error(line , "정의" , $"'{assign.Name.Name}'에 대입할 칸이 없습니다.");
                 return;
             }
-            else
+            else if (assign.Create >= 0)
             {
                 SlotInfo create = slot_at(0 , assign.Create);
                 if (!targets.Contains(create)) targets.Add(create);
