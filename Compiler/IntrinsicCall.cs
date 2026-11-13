@@ -45,6 +45,9 @@ public partial class Interpreter
             return long2(op , a , b);
         if (is_number(x) && is_number(y))
             return number2(op , x! , y!);
+        //구조체 값은 연산자를 다시 정의했을수 있으므로 원래 내장 함수로 계산
+        if (x is StructInstance)
+            return Miss;
         return any2(op , x , y);
     }
 
@@ -198,7 +201,8 @@ public partial class Interpreter
                 {
                     object? x = a();
                     object r = fast1(op , x);
-                    return r != Miss ? r : owner.invoke_function(callee , new[] { x });
+                    //빌린 구조체 값은 다시 정의한 연산자(구조체 함수)가 바꿀수 있으므로 원래대로 복사해서 넘김
+                    return r != Miss ? r : owner.invoke_function(callee , new[] { borrowed_a ? owner.read(x) : x });
                 }
                 case 2:
                 {
@@ -207,10 +211,10 @@ public partial class Interpreter
                     if (x is StructInstance lent && hosted_b is not null && hosted_b())
                         x = owner.read(lent);
                     object? y = b();
-                    if ((borrowed_a || borrowed_b) && op is Intrinsic.Equal && x is StructInstance s && y is StructInstance t)
+                    if ((borrowed_a || borrowed_b) && op is Intrinsic.Equal && x is StructInstance s && y is StructInstance t && overload(s , "==") is null)
                         return box(StructInstance.Same(s , borrowed_a , t , borrowed_b));
                     object r = fast2(op , x , y);
-                    return r != Miss ? r : owner.invoke_function(callee , new[] { x , y });
+                    return r != Miss ? r : owner.invoke_function(callee , new[] { borrowed_a ? owner.read(x) : x , borrowed_b ? owner.read(y) : y });
                 }
                 default:
                 {

@@ -27,6 +27,8 @@ public partial class Interpreter
         //Borrow로 읽을 때 프로그램이 제공한 변수의 get(C# 코드)이 실행되는지 (null이라면 실행되지 않음)
         //그렇다면 그 코드가 앞에서 빌린 구조체 값을 바꿀수 있으므로, 앞의 값은 빌리지 않고 복사해야 함
         public Func<bool>? Hosted { get; init; }
+        //문법 오류가 있는 식이라면 그 메시지 (실행하면 오류, 연산자 식 등을 만들때 더 이어붙이지 않음)
+        public string? SyntaxError { get; init; }
 
         public static Expr Constant(object? value) => new(() => value) { IsConstant = true , Value = value };
         public static Expr Folded(Func<object?> eval , object? value , (NameSite, object)[] guards , bool may_end_early) => new(eval) { IsConstant = true , Value = value , Guards = guards , MayEndEarly = may_end_early };
@@ -98,7 +100,7 @@ public partial class Interpreter
                 case KeywordType.If:
                 case KeywordType.While:
                 {
-                    Expr[] arguments = compile_arguments(tokens , 1 , out _);
+                    Expr[] arguments = compile_keyword_arguments(tokens , 1);
                     Func<object?[]> evaluate = make_arguments(arguments);
                     line.Arguments = evaluate;
                     //조건이 하나라면 인자 배열을 만들지 않고 바로 참/거짓을 판단
@@ -114,10 +116,10 @@ public partial class Interpreter
                 case KeywordType.Return:
                 case KeywordType.Goto:
                 case KeywordType.Repeat:
-                    line.Arguments = make_arguments(compile_arguments(tokens , 1 , out _));
+                    line.Arguments = make_arguments(compile_keyword_arguments(tokens , 1));
                     break;
                 case KeywordType.For:
-                    line.Arguments = make_arguments(compile_arguments(tokens , 2 , out _));
+                    line.Arguments = make_arguments(compile_keyword_arguments(tokens , 2));
                     break;
                 case KeywordType.Local:
                     if (tokens.Length > 3 && is_prefix(tokens , 2 , '='))
@@ -134,7 +136,7 @@ public partial class Interpreter
 
     static JyunoException parenthesis_error() => new("괄호 '(' 다음에는 ')'로 끝나야만 합니다.");
 
-    //start 위치부터 하나의 식(대입, 함수 호출, 변수 읽기 등)을 컴파일
+    //start 위치부터 하나의 식(대입, 함수 호출, 변수 읽기, 연산자 식 등)을 컴파일
     //end: 식 다음 토큰의 위치
     //closed: 식 바로 다음에 ')'가 와야 하는지 (괄호 안의 식)
     Expr compile_expression(Token[] tokens , int start , bool closed , out int end)
@@ -143,99 +145,83 @@ public partial class Interpreter
         if (start >= tokens.Length)
             return Expr.Constant(null);
         Token token = tokens[start];
-        switch (token.type)
+        //(상수) = (이름): 상수 만들기
+        if (token.type is TokenType.Constant && is_prefix(tokens , start + 1 , '=') && tokens.Length > start + 2 && tokens[start + 2].type is TokenType.Name)
         {
-            //상수
-            case TokenType.Constant:
-                object constant = token.value;
-                //(상수) = (이름): 상수 만들기
-                if (is_prefix(tokens , start + 1 , '=') && tokens.Length > start + 2 && tokens[start + 2].type is TokenType.Name)
-                {
-                    string constant_name = (string)tokens[start + 2].value;
-                    return new Expr(() => {
-                        substitute_variable(constant_name , new JyunoConstantVariable(constant));
-                        return null;
-                    });
-                }
-                end = start + 1;
-                return Expr.Constant(constant);
-            //이름
-            case TokenType.Name:
-                string name = (string)token.value;
-                //대입 연산인가?
-                if (is_prefix(tokens , start + 1 , '='))
-                {
-                    //뒤에 인자가 더 없거나 ')' 이라면 삭제 연산
-                    if (start + 2 >= tokens.Length || is_prefix(tokens , start + 2 , ')'))
-                    {
-                        end = start + 2;
-                        return new Expr(() => {
-                            if (EnableRemoveVariable)
-                                return remove_variable(name);
-                            throw new JyunoException("런타임에서 변수/함수 삭제 연산을 허용하지 않습니다.");
-                        });
-                    }
-                    Expr rhs = compile_expression(tokens , start + 2 , closed , out end);
-                    Func<object?> value = rhs.Eval;
-                    NameSite target = new(name);
-                    return new Expr(() => {
-                        //대입 연산이 금지되었는가?
-                        if (BlockSubstitute)
-                            throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
-                        object? ret = value();
-                        //값이 ')' 전에 끝났다면 대입한 다음 괄호를 처리하는 쪽에 알림
-                        EarlyEnd? early = null;
-                        if (ret is EarlyEnd e)
-                        {
-                            early = e;
-                            ret = e.Value;
-                        }
-                        //변수가 존재하는가? (지금 영역부터 바깥 영역, 프로그램이 제공하는 변수 순서)
-                        //없다면 지금 영역에 새로 만듦
-                        if (resolve(target , out object? holder))
-                        {
-                            if (holder is VariableInterface vi)
-                                assign(vi , name , ret);
-                            else
-                                throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
-                        }
-                        else
-                        {
-                            declare_variable(name , ret);
-                        }
-                        return early is null ? null : new EarlyEnd(null);
-                    }) { MayEndEarly = rhs.MayEndEarly };
-                }
-                //레이블 연산인가?
-                if (is_prefix(tokens , start + 1 , ':'))
-                {
-                    return new Expr(() => {
-                        substitute_variable(name , new JyunoVariable(CurrentExecuteLine));
-                        return null;
-                    });
-                }
-                return compile_call(tokens , start , closed , out end);
-            //연산자
-            case TokenType.Prefix:
-                if (token.value is '(')
-                {
-                    Expr inner = compile_expression(tokens , start + 1 , true , out int inner_end);
-                    //괄호는 ')'로 닫혀야 하며, 그 다음 위치를 알려줌
-                    if (!is_prefix(tokens , inner_end , ')'))
-                        return throw_after(inner);
-                    end = inner_end + 1;
-                    return close(inner);
-                }
-                if (token.value is ')')
-                {
-                    end = start;
-                    return Expr.Constant(null);
-                }
-                return Expr.Constant(null);
-            //그 외
-            default:
-                return new Expr(() => throw new JyunoException("처리할수 없습니다."));
+            object constant = token.value;
+            string constant_name = (string)tokens[start + 2].value;
+            return new Expr(() => {
+                substitute_variable(constant_name , new JyunoConstantVariable(constant));
+                return null;
+            });
         }
+        if (token.type is TokenType.Name)
+        {
+            string name = (string)token.value;
+            //대입 연산인가?
+            if (is_prefix(tokens , start + 1 , '='))
+            {
+                //뒤에 인자가 더 없거나 ')' 이라면 삭제 연산
+                if (start + 2 >= tokens.Length || is_prefix(tokens , start + 2 , ')'))
+                {
+                    end = start + 2;
+                    return new Expr(() => {
+                        if (EnableRemoveVariable)
+                            return remove_variable(name);
+                        throw new JyunoException("런타임에서 변수/함수 삭제 연산을 허용하지 않습니다.");
+                    });
+                }
+                Expr rhs = compile_expression(tokens , start + 2 , closed , out end);
+                return make_assign(name , rhs);
+            }
+            //복합 대입 연산인가? (x += 1)
+            if (start + 1 < tokens.Length && tokens[start + 1].type is TokenType.Operator && Grammar.CompoundAssignment((string)tokens[start + 1].value) is string symbol)
+                return compile_compound(tokens , start , symbol , closed , out end);
+            //레이블 연산인가?
+            if (is_prefix(tokens , start + 1 , ':'))
+            {
+                return new Expr(() => {
+                    substitute_variable(name , new JyunoVariable(CurrentExecuteLine));
+                    return null;
+                });
+            }
+        }
+        //함수 호출, 상수, 괄호, 연산자 식
+        return compile_operators(tokens , start , closed , false , out end);
+    }
+
+    //(이름) = (값)
+    Expr make_assign(string name , Expr rhs)
+    {
+        Func<object?> value = rhs.Eval;
+        NameSite target = new(name);
+        return new Expr(() => {
+            //대입 연산이 금지되었는가?
+            if (BlockSubstitute)
+                throw new JyunoException("런타임에서 변수 대입 연산을 허용하지 않습니다.");
+            object? ret = value();
+            //값이 ')' 전에 끝났다면 대입한 다음 괄호를 처리하는 쪽에 알림
+            EarlyEnd? early = null;
+            if (ret is EarlyEnd e)
+            {
+                early = e;
+                ret = e.Value;
+            }
+            //변수가 존재하는가? (지금 영역부터 바깥 영역, 프로그램이 제공하는 변수 순서)
+            //없다면 지금 영역에 새로 만듦
+            if (resolve(target , out object? holder))
+            {
+                if (holder is VariableInterface vi)
+                    assign(vi , name , ret);
+                else
+                    throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
+            }
+            else
+            {
+                declare_variable(name , ret);
+            }
+            return early is null ? null : new EarlyEnd(null);
+        }) { MayEndEarly = rhs.MayEndEarly , SyntaxError = rhs.SyntaxError };
     }
 
     //괄호 안의 식: ')' 전에 끝났다면 오류
@@ -264,12 +250,14 @@ public partial class Interpreter
     }
 
     //(이름) (인자들): 함수 호출, 변수 읽기, 또는 배열/리스트의 인덱스 읽기/쓰기
-    Expr compile_call(Token[] tokens , int start , bool closed , out int end)
+    //argument: 키워드의 인자 자리 (인자 없이 쓴 이름이 없다면 값을 읽을 때와 같은 오류)
+    Expr compile_call(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         string name = (string)tokens[start].value;
         NameSite site = new(name);
-        //뒤에 인자가 있는가? (변수라면 배열/리스트일때만 인자를 사용)
-        bool has_arguments = start + 1 < tokens.Length && !is_prefix(tokens , start + 1 , ')');
+        //뒤에 인자가 있는가? (변수라면 배열/리스트일때만 인자를 사용, 연산자와 ':'(조건 연산자) 앞에서 인자가 끝남)
+        bool has_arguments = start + 1 < tokens.Length && !is_prefix(tokens , start + 1 , ')') && !is_prefix(tokens , start + 1 , ':') && tokens[start + 1].type is not TokenType.Operator;
+        string missing = argument && !has_arguments ? $"'{name}'은/는 알수없는 변수/함수 입니다." : $"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.";
         //[실험] 인라이닝: 파라미터 이름은 영역 대신 인자를 바로 읽음 (파라미터를 함수처럼 부르거나 인덱스로 쓰면 인라인하지 않음)
         if (inline_slot(name) is int slot)
         {
@@ -278,7 +266,7 @@ public partial class Interpreter
             //함수 영역이 만들어진 뒤(materialize_inline)에는 원래대로 이름을 찾아서 실행
             Dictionary<string , int>? parameters = inline_params;
             inline_params = null;
-            Expr normal = compile_call(tokens , start , closed , out end);
+            Expr normal = compile_call(tokens , start , closed , argument , out end);
             inline_params = parameters;
             return slot_read(slot , normal);
         }
@@ -333,14 +321,14 @@ public partial class Interpreter
                 if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? found))
                     return invoke(found);
                 if (!resolve(site , out object? holder))
-                    throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
+                    throw new JyunoException(missing);
                 return invoke(holder);
             }) { MayEndEarly = closed && has_arguments };
         }
         //내장 함수 호출 자리라면 특화 (Compiler/IntrinsicCall.cs)
         Func<object?> call = specialize_call(site , arguments , invoke) ?? (() => {
             if (!resolve(site , out object? holder))
-                throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
+                throw new JyunoException(missing);
             return invoke(holder);
         });
         bool may_end_early = closed && has_arguments;
@@ -466,13 +454,18 @@ public partial class Interpreter
                         i = inner_end;
                         break;
                     }
-                    if (token.value is ')')
+                    //')'와 ':'(조건 연산자)에서 인자가 끝남
+                    if (token.value is ')' or ':')
                     {
                         end = i;
                         return arguments.ToArray();
                     }
-                    //그 외의 연산자는 무시
+                    //그 외의 기호는 무시
                     break;
+                //연산자 앞에서 인자가 끝남 (f a + b = (f a) + b)
+                case TokenType.Operator:
+                    end = i;
+                    return arguments.ToArray();
                     //키워드 등은 무시
             }
         }

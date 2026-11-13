@@ -1,0 +1,48 @@
+struct p
+  param x
+  param y
+  func +
+    param o
+    return p (x + o.x) (y + o.y)
+  endfunc
+  func *
+    param k
+    return p (x * k) (y * k)
+  endfunc
+  func len2
+    return x * x + y * y
+  endfunc
+endstruct
+func addp
+  param a
+  param b
+  return a + b
+endfunc
+func scale
+  param a
+  param k
+  return a * k + a
+endfunc
+func dot
+  param a
+  param b
+  return a.x * b.x + a.y * b.y
+endfunc
+func same
+  param a
+  param b
+  return a == b && !(a != b)
+endfunc
+q = p 1 2
+r = p 3 4
+total = p 0 0
+i = 0
+while i < 5
+  total = addp total (scale q i)
+  total += r
+  i += 1
+end
+console.writeline (host.show total q r (dot q r) (same q q) (same q r) (total.len2))
+l = list q r
+console.writeline (host.show ((l 0) + (l 1)) l)
+console.writeline (host.show (host.keep (q + r)) (host.get) q)

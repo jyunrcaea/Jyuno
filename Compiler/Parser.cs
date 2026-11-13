@@ -17,8 +17,8 @@ public class Parser
             {
                 continue;
             }
-            //숫자? (숫자 바로 앞에 붙은 '-'는 음수 부호)
-            if (is_digit(start) || (start is '-' && index + 1 < text.Length && is_digit(text[index + 1])))
+            //숫자? (숫자 바로 앞에 붙은 '-'는 음수 부호, 단 'a-1'처럼 값 바로 뒤에 붙은 '-'는 뺄셈 연산자)
+            if (is_digit(start) || (start is '-' && index + 1 < text.Length && is_digit(text[index + 1]) && !after_value(text , index)))
             {
                 int begin = index;
                 while (++index < text.Length && is_digit(text[index])) { }
@@ -45,7 +45,29 @@ public class Parser
                 stack.AddLast(new Token(TokenType.Constant , num));
                 continue;
             }
-            //연산자?
+            //주석: '//'부터 줄 끝까지 무시 (1.6.0부터, 이전에는 '/'로 시작하는 줄이 아무것도 하지 않았음)
+            if (start is '/' && index + 1 < text.Length && text[index + 1] is '/')
+                break;
+            //연산자? (긴 기호부터, '='만 있다면 대입/삭제 기호)
+            if (Grammar.OperatorChars.Contains(start))
+            {
+                string? symbol = null;
+                foreach (string op in Grammar.Operators)
+                {
+                    if (string.CompareOrdinal(text , index , op , 0 , op.Length) == 0)
+                    {
+                        symbol = op;
+                        break;
+                    }
+                }
+                if (symbol is not null)
+                {
+                    stack.AddLast(new Token(TokenType.Operator , symbol));
+                    index += symbol.Length - 1;
+                    continue;
+                }
+            }
+            //기호?
             if (Grammar.Prefixes.Contains(start))
             {
                 stack.AddLast(new Token(TokenType.Prefix , start));
@@ -81,7 +103,7 @@ public class Parser
             string name;
             {
                 StringBuilder sb = new();
-                for(;index < text.Length && !Grammar.Prefixes.Contains(start = text[index]) && start != ' ' && start != '"' && start != '\'' ; index++)
+                for(;index < text.Length && !Grammar.Prefixes.Contains(start = text[index]) && !Grammar.OperatorChars.Contains(start) && start != ' ' && start != '"' && start != '\'' ; index++)
                 {
                     sb.Append(start);
                 }
@@ -101,6 +123,17 @@ public class Parser
     }
 
     static bool is_digit(char c) => '0' <= c && c <= '9';
+
+    //index 위치의 글자가 값(이름, 숫자, 문자열, ')') 바로 뒤에 붙어 있는지 ('a-1', '(x)-1'의 '-'는 뺄셈)
+    static bool after_value(string text , int index)
+    {
+        if (index is 0)
+            return false;
+        char before = text[index - 1];
+        if (before is ')')
+            return true;
+        return before is not ' ' && !Grammar.Prefixes.Contains(before) && !Grammar.OperatorChars.Contains(before);
+    }
 
     public static IEnumerable<GrammarError> Checker(string[] texts)
     {
@@ -122,20 +155,13 @@ public class Parser
                 {
                     //연산자라면?
                     case TokenType.Prefix:
-                        switch ((char)ret[i].value)
-                        {
-                            case ':':
-                                if (ret[i - 1].type is TokenType.Constant)
-                                    yield return new(line , "상수에 값을 대입할수 없습니다.");
-                                break;
-                            case '+':
-                            case '-':
-                            case '*':
-                            case '/':
-                                if (ret[i - 1].type is TokenType.Prefix)
-                                    yield return new(line , "잘못된 연산자 사용.");
-                                break;
-                        }
+                        if ((char)ret[i].value is ':' && ret[i - 1].type is TokenType.Constant)
+                            yield return new(line , "상수에 값을 대입할수 없습니다.");
+                        break;
+                    //이항 연산자 바로 뒤에는 값 또는 단항 연산자가 와야 함
+                    case TokenType.Operator:
+                        if (ret[i - 1].type is TokenType.Operator && Grammar.BinaryPrecedence((string)ret[i - 1].value) >= 0 && !Grammar.IsUnary((string)ret[i].value))
+                            yield return new(line , "잘못된 연산자 사용.");
                         break;
                     //아니라면?
                 }

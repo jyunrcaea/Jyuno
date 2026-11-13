@@ -1,0 +1,15 @@
+func add
+  param a
+  param b
+  return "redefined"
+endfunc
+func equal
+  return false
+endfunc
+console.writeline (host.show (1 + 2) (add 1 2) (1 == 1) (equal 1 1))
+x = 1
+x += 2
+console.writeline x
+add =
+equal =
+console.writeline (host.show (add 1 2) (equal 3 3) (1 + 2 == 3))
