@@ -107,7 +107,7 @@ public sealed class ScriptAnalysis
             if (is_prefix(tokens , start + 1 , ':'))
                 return new LabelExpression(name);
         }
-        return parse_operators(tokens , start , closed , out end);
+        return parse_operators(tokens , start , closed , false , out end);
     }
 
     //─── 연산자 식 (Compiler/OperatorCompiler.cs와 같은 구조, 1.6.0부터) ───
@@ -117,23 +117,24 @@ public sealed class ScriptAnalysis
     //연산자의 피연산자가 괄호 안에서 ')' 전에 끝나면 연산자를 계산하기 전에 괄호 오류
     static Expression operand(Expression e) => e.MayEndEarly ? new ParenthesisExpression(e) : e;
 
-    static Expression parse_operators(Token[] tokens , int start , bool closed , out int end)
+    //argument: 키워드(if, return 등)의 인자 자리인지 (괄호 없이 쓴 이름이 없을 때의 오류 메시지가 다름)
+    static Expression parse_operators(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
-        Expression condition = parse_binary(tokens , start , closed , 2 , out end);
+        Expression condition = parse_binary(tokens , start , closed , argument , 2 , out end);
         if (condition is SyntaxErrorExpression || !is_operator(tokens , end , "?"))
             return condition;
         int question = end;
         end = tokens.Length;
         if (operand_missing(tokens , question + 1))
             return new SyntaxErrorExpression("조건 연산자 '?' 다음에 값이 없습니다.");
-        Expression then = parse_operators(tokens , question + 1 , closed , out int middle);
+        Expression then = parse_operators(tokens , question + 1 , closed , argument , out int middle);
         if (then is SyntaxErrorExpression)
             return then;
         if (!is_prefix(tokens , middle , ':'))
             return new SyntaxErrorExpression("조건 연산자 '?' 다음에는 ':'가 와야 합니다. (조건 ? 참일때 : 거짓일때)");
         if (operand_missing(tokens , middle + 1))
             return new SyntaxErrorExpression("조건 연산자 ':' 다음에 값이 없습니다.");
-        Expression otherwise = parse_operators(tokens , middle + 1 , closed , out end);
+        Expression otherwise = parse_operators(tokens , middle + 1 , closed , argument , out end);
         if (otherwise is SyntaxErrorExpression)
         {
             end = tokens.Length;
@@ -142,9 +143,9 @@ public sealed class ScriptAnalysis
         return new ConditionalExpression(operand(condition) , operand(then) , operand(otherwise));
     }
 
-    static Expression parse_binary(Token[] tokens , int start , bool closed , int min , out int end)
+    static Expression parse_binary(Token[] tokens , int start , bool closed , bool argument , int min , out int end)
     {
-        Expression left = parse_unary(tokens , start , closed , out end);
+        Expression left = parse_unary(tokens , start , closed , argument , out end);
         while (left is not SyntaxErrorExpression && end < tokens.Length && tokens[end].type is TokenType.Operator)
         {
             string symbol = (string)tokens[end].value;
@@ -156,7 +157,7 @@ public sealed class ScriptAnalysis
                 end = tokens.Length;
                 return new SyntaxErrorExpression($"연산자 '{symbol}' 다음에 값이 없습니다.");
             }
-            Expression right = parse_binary(tokens , end + 1 , closed , symbol is "??" ? precedence : precedence + 1 , out end);
+            Expression right = parse_binary(tokens , end + 1 , closed , argument , symbol is "??" ? precedence : precedence + 1 , out end);
             if (right is SyntaxErrorExpression)
             {
                 end = tokens.Length;
@@ -167,7 +168,7 @@ public sealed class ScriptAnalysis
         return left;
     }
 
-    static Expression parse_unary(Token[] tokens , int start , bool closed , out int end)
+    static Expression parse_unary(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         if (start < tokens.Length && tokens[start].type is TokenType.Operator)
         {
@@ -177,15 +178,15 @@ public sealed class ScriptAnalysis
                 return new SyntaxErrorExpression($"연산자 '{symbol}' 앞에 값이 없습니다.");
             if (operand_missing(tokens , start + 1))
                 return new SyntaxErrorExpression($"연산자 '{symbol}' 다음에 값이 없습니다.");
-            Expression inner = parse_unary(tokens , start + 1 , closed , out end);
+            Expression inner = parse_unary(tokens , start + 1 , closed , argument , out end);
             if (inner is SyntaxErrorExpression)
                 return inner;
             return new UnaryExpression(symbol , operand(inner));
         }
-        return parse_primary(tokens , start , closed , out end);
+        return parse_primary(tokens , start , closed , argument , out end);
     }
 
-    static Expression parse_primary(Token[] tokens , int start , bool closed , out int end)
+    static Expression parse_primary(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         end = tokens.Length;
         if (start >= tokens.Length)
@@ -197,7 +198,7 @@ public sealed class ScriptAnalysis
                 end = start + 1;
                 return new ConstantExpression(token.value);
             case TokenType.Name:
-                return parse_call(tokens , start , closed , out end);
+                return parse_call(tokens , start , closed , argument , out end);
             case TokenType.Prefix:
                 if (token.value is '(')
                 {
@@ -218,12 +219,12 @@ public sealed class ScriptAnalysis
         }
     }
 
-    static Expression parse_call(Token[] tokens , int start , bool closed , out int end)
+    static Expression parse_call(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         string name = (string)tokens[start].value;
         bool has_arguments = start + 1 < tokens.Length && !is_prefix(tokens , start + 1 , ')') && !is_prefix(tokens , start + 1 , ':') && tokens[start + 1].type is not TokenType.Operator;
         var arguments = ParseArguments(tokens , start + 1 , out end);
-        return new CallExpression(name , arguments , has_arguments , closed);
+        return new CallExpression(name , arguments , has_arguments , closed , argument);
     }
 
     /// <summary>start 위치부터 ')', ':', 연산자 또는 줄 끝까지 함수 호출의 인자를 해석합니다.</summary>
@@ -284,7 +285,7 @@ public sealed class ScriptAnalysis
                 i++;
                 continue;
             }
-            arguments.Add(parse_operators(tokens , i , false , out int end));
+            arguments.Add(parse_operators(tokens , i , false , true , out int end));
             i = Math.Max(end , i + 1);
         }
         return arguments;
