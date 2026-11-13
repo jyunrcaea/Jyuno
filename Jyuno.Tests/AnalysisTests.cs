@@ -61,6 +61,14 @@ public class AnalysisTests
         var point = Assert.IsType<CallExpression>(Assert.Single(s[3].Arguments));
         Assert.Equal(2 , point.Arguments.Count);
         Assert.IsType<BinaryExpression>(point.Arguments[0]);
+        //키워드 인자 자리의 이름 (괄호 안은 아님): 이름이 없을 때의 오류 메시지가 다름
+        Assert.True(point.IsKeywordArgument);
+        Assert.True(Assert.IsType<CallExpression>(less.Left).IsKeywordArgument);
+        Assert.False(call.IsKeywordArgument);
+        var paren = Analyze("return (x) + y").Root!.Statements[0];
+        var sum = Assert.IsType<BinaryExpression>(Assert.Single(paren.Arguments));
+        Assert.False(Assert.IsType<CallExpression>(sum.Left).IsKeywordArgument);
+        Assert.True(Assert.IsType<CallExpression>(sum.Right).IsKeywordArgument);
     }
 
     [Fact]

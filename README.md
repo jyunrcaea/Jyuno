@@ -102,7 +102,7 @@ foreach (Statement statement in analysis.Root!.Statements)  // 구문 트리
 | API | 내용 |
 |---|---|
 | ``ScriptAnalysis.Analyze(lines)`` | 토큰, 블록 구조, 구문 트리(``Root``), 변수 영역(``TopScope``, ``Scopes``), 함수 목록, goto 대상 |
-| ``Statement`` / ``Expression`` | 문장(``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement`` 등)과 식(``CallExpression``, ``AssignExpression``, ``RemoveExpression`` 등). 줄을 컴파일하는 규칙과 같게 나눕니다. 1.6.0부터 연산자는 ``BinaryExpression``, ``UnaryExpression``, ``ConditionalExpression``, ``CompoundAssignExpression``이며, 구조체의 연산자 함수는 ``FunctionStatement.Operator``에 기호가 있습니다. |
+| ``Statement`` / ``Expression`` | 문장(``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement`` 등)과 식(``CallExpression``, ``AssignExpression``, ``RemoveExpression`` 등). 줄을 컴파일하는 규칙과 같게 나눕니다. 1.6.0부터 연산자는 ``BinaryExpression``, ``UnaryExpression``, ``ConditionalExpression``, ``CompoundAssignExpression``이며, 구조체의 연산자 함수는 ``FunctionStatement.Operator``에 기호가 있습니다. 1.6.1부터 ``CallExpression.IsKeywordArgument``는 키워드(``if``, ``return`` 등) 인자의 연산자 식에 괄호 없이 쓴 이름인지 알려줍니다. (없는 이름의 오류 메시지가 다름) |
 | ``Scope`` | 영역(최상위, 함수 호출 한번, for 반복 한번, 구조체 값 하나)마다 만들어질수 있는 이름과 종류(변수/함수/상수/구조체) |
 | ``GotoStatement.Targets`` | goto가 같은 블록이나 바깥 블록으로 이동할 때의 실행 위치 |
 | ``ScriptAnalysis.CheckNativeJs(globals)`` | JavaScript로 변환할때(Native JS) 필요한 제약 검사 |
@@ -116,7 +116,7 @@ Native JS(Jyuno 코드를 JavaScript로 변환해서 실행)는 다음을 지켜
 4. 블록 구조 오류(``end`` 누락 등)는 그 줄에 도달하기 전에, 실행하기 전에 보고합니다.
 5. 구조체(``struct``, 1.5.1부터 Native JS 지원) 안에서 다른 구조체를 정의할수 없습니다.
 
-1.6.0의 연산자(``+``, ``==``, ``&&`` 등)는 JyunoSdk 0.4.1의 Native JS가 아직 지원하지 않습니다.
+1.6.0의 연산자(``+``, ``==``, ``&&`` 등)와 구조체의 연산자 함수(``func +``)는 JyunoSdk 0.5.0부터 Native JS가 지원합니다. (Jyuno 1.6.1 필요)
 
 ### 구조체 값 (StructValue, 1.5.0부터)
 스크립트가 반환하거나 C# 함수의 인자로 넘긴 구조체 값은 ``Jyuno.Language.StructValue``입니다. ``TypeName``(구조체 이름), ``FieldNames``(필드 이름), ``value["필드"]`` 또는 ``TryGetField``로 필드를 읽을수 있습니다.  

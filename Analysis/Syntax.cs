@@ -32,12 +32,13 @@ public sealed class VariableExpression : Expression
 /// <summary>식 맨 앞의 이름: 함수라면 호출, 변수라면 값 (인자가 있고 배열/리스트라면 원소 읽기/쓰기)</summary>
 public sealed class CallExpression : Expression
 {
-    internal CallExpression(string name , IReadOnlyList<Expression> arguments , bool has_arguments , bool closed)
+    internal CallExpression(string name , IReadOnlyList<Expression> arguments , bool has_arguments , bool closed , bool keyword_argument = false)
     {
         Name = name;
         Arguments = arguments;
         HasArguments = has_arguments;
         Closed = closed;
+        IsKeywordArgument = keyword_argument;
     }
     public string Name { get; }
     public IReadOnlyList<Expression> Arguments { get; }
@@ -45,6 +46,11 @@ public sealed class CallExpression : Expression
     public bool HasArguments { get; }
     /// <summary>괄호 안의 식인지</summary>
     public bool Closed { get; }
+    /// <summary>
+    /// 키워드(if, return 등) 인자의 연산자 식에 괄호 없이 쓴 이름인지 (1.6.0부터).
+    /// 인자 없이 쓴 이름이 없다면 오류 메시지가 '알수없는 변수/함수'이고, 그 외에는 '존재하지 않는 함수/변수/명령어'
+    /// </summary>
+    public bool IsKeywordArgument { get; }
     public override bool MayEndEarly => Closed && HasArguments;
 }
 
