@@ -1,0 +1,26 @@
+#!dump a a.n
+struct c
+  param n
+  func +
+    param o
+    return c (n + o.n)
+  endfunc
+  func ==
+    param o
+    return null != o && n == o.n
+  endfunc
+endstruct
+func bump
+  a.n += 10
+  return c 3
+endfunc
+a = c 1
+//왼쪽 값은 오른쪽 값을 계산하기 전에 읽음
+console.writeline (host.show (a + (bump)) a)
+host.settrap "bump"
+console.writeline (host.show (a + host.trap) a (a == host.trap) a (equal a host.trap) a)
+console.writeline (host.show (a == trapvar) (equal a trapvar) (less 1 2) a)
+host.var = c 2
+console.writeline (host.show (a + host.var) (equal a host.var a) (a == host.var) (host.var == a))
+host.settrap "a = c 100"
+console.writeline (host.show (a == host.trap) a (null == host.trap))

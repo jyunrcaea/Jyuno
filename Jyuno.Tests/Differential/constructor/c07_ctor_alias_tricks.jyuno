@@ -1,0 +1,71 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct s
+  param p
+  param mode
+  if (equal mode 1)
+    func p.x
+      return 42
+    endfunc
+  end
+  if (equal mode 2)
+    p.x:
+  end
+  if (equal mode 3)
+    7 = p.x
+  end
+  if (equal mode 4)
+    p.q = 5
+  end
+  if (equal mode 5)
+    local p.x = 77
+  end
+  if (equal mode 6)
+    p.x =
+    p.x = 88
+  end
+  if (equal mode 7)
+    p.move =
+  end
+  if (equal mode 8)
+    p = 5
+    p.x = 3
+  end
+  if (equal mode 9)
+    t = p
+    p =
+    p = t
+    t =
+  end
+  func show
+    return (host.show p)
+  endfunc
+endstruct
+m = 0
+while (less m 10)
+  a = s (pt 1 2) m
+  b = a
+  console.writeline (host.show m a b (equal a b) (a.show) (b.show))
+  if (and (not (equal m 1)) (not (equal m 8)) (not (equal m 2)) (not (equal m 3)))
+    console.writeline (host.show a.p.x b.p.x)
+  end
+  if (less m 7)
+    b.p.move 1
+    console.writeline (host.show a b)
+  end
+  m = add m 1
+end

@@ -1,0 +1,5 @@
+func h
+    param mul
+    return (sub mul 1)
+endfunc
+console.writeline (h 5)

@@ -737,7 +737,7 @@ public partial class Interpreter
             Slot[] slots = slots_of(call.Name);
             E chain;
             if (call.Name.Import < 0)
-                chain = fail($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다." , typeof(object));
+                chain = fail(call.Missing , typeof(object));
             else
             {
                 object? holder = imports[call.Name.Import];
@@ -790,7 +790,7 @@ public partial class Interpreter
                     invoke = E.Block(temps , steps);
                 }
                 return E.Condition(E.Equal(slot.Var! , E.Constant(null , slot.Var!.Type)) ,
-                    fail($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다." , invoke.Type) , invoke);
+                    fail(call.Missing , invoke.Type) , invoke);
             }
         }
 

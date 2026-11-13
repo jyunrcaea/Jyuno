@@ -1,0 +1,26 @@
+struct bag
+  param l
+  func push
+    param v
+    list.push l v
+    return (length l)
+  endfunc
+endstruct
+src = list 1 2
+a = bag src
+a.push 3
+console.writeline (host.show a src)
+b = a
+b.push 4
+console.writeline (host.show a b src)
+func mk
+  param l
+  return (bag l)
+endfunc
+c = mk src
+c.push 5
+console.writeline (host.show c src)
+d = mk (list 9)
+e = d
+e.push 1
+console.writeline (host.show d e)

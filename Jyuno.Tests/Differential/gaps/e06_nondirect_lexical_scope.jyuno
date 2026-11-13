@@ -1,0 +1,37 @@
+secret = 100
+g = 0
+func f
+  param a
+  return (g = add a secret)
+endfunc
+func f2
+  param a
+  param a
+  return (add a secret)
+endfunc
+func f3
+  param l
+  return (add (l 0) secret)
+endfunc
+func f4
+  param a.b
+  return (add a.b secret)
+endfunc
+func caller
+  local secret = 5
+  local g = 7
+  f 1
+  return (list g secret (f2 1 2) (f3 (list 10)) (f4 20))
+endfunc
+console.writeline (host.show (caller) g)
+struct s
+  param secret
+  func m
+    return (list (f 1) g (f2 1 2) (f3 (list 10)) (f4 20) secret)
+  endfunc
+endstruct
+v = s 9
+console.writeline (host.show (v.m) g)
+for secret (list 1 2)
+  console.writeline (host.show (f secret) g (f2 0 0))
+end

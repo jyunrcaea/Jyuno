@@ -1,0 +1,18 @@
+struct counter
+  param n
+  func inc
+    n = add n 1
+    return n
+  endfunc
+endstruct
+struct two
+  a = counter 0
+  b = a
+  a.inc
+  func both
+    return (list (a.inc) (b.inc))
+  endfunc
+endstruct
+t = two
+u = tt
+console.writeline (host.show (t.both) (u.both) (t.both) t u)

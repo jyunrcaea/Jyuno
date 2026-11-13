@@ -1,0 +1,5 @@
+func f
+    param n
+    return (f (add n 1))
+endfunc
+f 0

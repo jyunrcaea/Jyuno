@@ -1,0 +1,23 @@
+leaked = list
+struct outer
+  param n
+  i = 0
+  while (less i 1)
+    struct tap
+      param tag
+      func get
+        return (add n tag)
+      endfunc
+    endstruct
+    held = tap 1
+    list.push leaked (tap 2)
+    i = add i 1
+  end
+endstruct
+o = outer 10
+o.n = 50
+t = leaked 0
+console.writeline (host.show (t.get) (o.held.get) o)
+p = o
+p.n = 90
+console.writeline (host.show (t.get) (o.held.get) (p.held.get))

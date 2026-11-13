@@ -1,0 +1,41 @@
+#!dump a b a.x b.x
+struct v
+  param x
+  func +
+    param o
+    x = x + o.x
+    o.x = 999
+    return v x
+  endfunc
+  func -
+    param o
+    //단항 연산자(-a)는 인자 없이 호출됨 (o는 null)
+    if null == o
+      x = -x
+      return v x
+    end
+    return v (x - o.x)
+  endfunc
+  func ==
+    param o
+    //null과 비교하면 o.x가 없으므로 먼저 확인 (null == o는 왼쪽 값이 null이므로 원래대로 비교)
+    if null == o
+      return false
+    end
+    x = 12345
+    return x == o.x
+  endfunc
+endstruct
+a = v 1
+b = v 2
+c = a + b
+console.writeline (host.show a b c (a - b) (-a) a)
+console.writeline (host.show (a == b) (a != b) (equal a b) (equal a a) (a == a))
+console.writeline (host.show a b)
+d = a + a + a
+console.writeline (host.show d a)
+a += b
+console.writeline (host.show a b)
+a -= b
+console.writeline (host.show a b)
+console.writeline (host.show (a == null) (a != null) (equal a null) (null == a))

@@ -18,6 +18,10 @@ public partial class Interpreter : IDisposable
     }
     public bool EnableRemoveVariable { get; set; } = true;
     public bool BlockSubstitute { get; set; } = false;
+    /// <summary>[실험, 1.5.2부터] 탈출 분석: 방금 만들어진 구조체 값은 다시 복사하지 않고, 읽기만 하는 내장 함수에는 복사하지 않고 넘깁니다. 실행 결과는 끈 것과 같습니다.</summary>
+    public bool EscapeAnalysis { get; set; } = false;
+    /// <summary>[실험, 1.5.2부터] 인라이닝: param 줄들과 return 한 줄로만 된 함수는 함수 영역과 호출 정보를 만들지 않고 바로 계산합니다. 실행 결과는 끈 것과 같습니다.</summary>
+    public bool Inlining { get; set; } = false;
     public Runtime runtime { get; init; }
     public int CurrentExecuteLine { get; private set; } = -1;
 
@@ -35,6 +39,10 @@ public partial class Interpreter : IDisposable
         public long Version;
         //다른 영역에서 이름을 찾을때 이 영역을 거쳐간 적이 있는지 (그렇다면 이 영역이 바뀔때 모든 캐시를 무효화)
         public bool Shared;
+        //구조체 값 하나의 영역이라면 그 구조체 값 (필드와 구조체 함수가 이 영역에 있음)
+        public StructInstance? Instance;
+        //구조체 값을 담은 변수 때문에 선언된 멤버 이름(me.name 등) → 실제로 가리키는 구조체 값과 그 안의 이름
+        public Dictionary<string , (StructInstance Instance, string Name)>? Aliases;
     }
     //지금 실행중인 영역 (처음에는 스크립트 최상위 영역, for 문 안에서는 반복 한번의 영역)
     Scope current;
@@ -159,7 +167,11 @@ public partial class Interpreter : IDisposable
         //새로 만드는 변수는 항상 지금 영역에 둠 (전역 목록은 다른 인터프리터와 공유함)
         VariableDictionary dict = current.Variables;
         if (!dict.TryAdd(name , value))
+        {
+            //구조체 값을 담은 변수를 덮어쓴다면 그 멤버 이름도 지움
+            forget(current , name , dict[name]);
             dict[name] = value;
+        }
         scope_changed(current);
     }
     bool remove_variable(string name)
@@ -167,9 +179,12 @@ public partial class Interpreter : IDisposable
         //읽을 때와 같은 순서로 찾아서 삭제함 (호출한 다른 함수의 지역 변수는 삭제하지 않음)
         for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (scope.Variables.Remove(name))
+            if (scope.Variables.Remove(name , out object? holder))
             {
+                //구조체 값을 담은 변수라면 멤버 이름(이름.필드 등)도 함께 지움
+                forget(scope , name , holder);
                 scope_changed(scope);
+                refresh_owner(scope);
                 return true;
             }
         }
@@ -201,7 +216,10 @@ public partial class Interpreter : IDisposable
         CurrentExecuteLine = line;
         try
         {
-            return execute_line(line , false);
+            materialize_inline();
+            object? result = execute_line(line , false);
+            escape(result is ReturnInfo ri ? ri.value : result);
+            return result;
         }
         catch (GrammarErrorException e)
         {
@@ -218,6 +236,15 @@ public partial class Interpreter : IDisposable
         if (running)
             throw new JyunoException("이미 실행중입니다.");
         running = true;
+        //인라인된 호출 도중에 C# 함수가 Run()을 호출했다면 ExecuteLine()처럼 함수 영역을 먼저 만듦
+        materialize_inline();
+        //인라인된 호출은 호출 프레임을 만들지 않으므로, 그 안에서 다시 실행한다면 프레임을 만들어 둠 (반복문의 상태가 바깥 호출과 섞이지 않도록)
+        bool frameless = inline_depth > (frames.Count > 0 ? frames.Peek().InlineDepth : 0);
+        if (frameless)
+        {
+            inline_depth--;
+            frames.Push(new CallFrame(inline_args , inline_depth));
+        }
         //스크립트가 바뀌었을수 있으므로 블록 정보를 새로 계산
         blocks = null;
         top_repeat_counts.Clear();
@@ -229,7 +256,10 @@ public partial class Interpreter : IDisposable
             {
                 var ret = execute_line(CurrentExecuteLine , true);
                 if (ret is ReturnInfo ri)
+                {
+                    escape(ri.value);
                     return ri.value;
+                }
                 //문법 오류가 있다면 실행을 멈추고 오류를 반환
                 if (ret is GrammarError)
                     return ret;
@@ -248,6 +278,11 @@ public partial class Interpreter : IDisposable
             current = top;
             top_for_states.Clear();
             CurrentExecuteLine = -1;
+            if (frameless)
+            {
+                frames.Pop();
+                inline_depth++;
+            }
         }
     }
     object? execute_line(int line , bool flow)
@@ -267,7 +302,10 @@ public partial class Interpreter : IDisposable
     {
         //ExecuteLine(string) 등으로 줄이 추가되었다면 다시 계산
         if (blocks is null || blocks.Count != scripts.Count)
+        {
             blocks = new BlockMap(scripts);
+            inline_shapes.Clear();
+        }
         return blocks;
     }
     //repeat 줄 → 남은 반복 횟수 (함수 호출마다 따로 관리해야 재귀 호출에서도 섞이지 않음)
@@ -294,8 +332,7 @@ public partial class Interpreter : IDisposable
     void enter_for(ForState state)
     {
         current = new Scope(state.Outer);
-        current.Variables[state.Name] = new JyunoVariable(state.Items[state.Index]);
-        scope_changed(current);
+        declare_variable(state.Name , state.Items[state.Index]);
     }
     //for 문을 빠져나감 (for 문 바깥 영역으로 되돌림)
     void exit_for(int line)
@@ -448,9 +485,25 @@ public partial class Interpreter : IDisposable
                 break;
             //함수 정의: 이름에 함수를 저장하고 endfunc 다음 줄로 건너뛰기
             case KeywordType.Func:
-                if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
+                if (tokens.Length != 2 || tokens[1].type is not (TokenType.Name or TokenType.Operator))
                     throw new JyunoException("func 다음에는 함수 이름 하나만 와야 합니다.");
+                //func (연산자): 구조체의 연산자 다시 정의 (구조체 생성자 안에서만, 1.6.0부터)
+                if (tokens[1].type is TokenType.Operator)
+                {
+                    string symbol = (string)tokens[1].value;
+                    if (!Grammar.IsOverloadable(symbol))
+                        throw new JyunoException($"연산자 '{symbol}'은/는 다시 정의할수 없습니다.");
+                    if (map.Owner[line] < 0 || keyword_of(map.Owner[line]) is not KeywordType.Struct)
+                        throw new JyunoException($"연산자 '{symbol}'은/는 구조체(struct) 안에서만 다시 정의할수 있습니다.");
+                }
                 substitute_variable((string)tokens[1].value , new JyunoFunction(this , line , map.Pair[line] , current));
+                jump(map.Pair[line] + 1);
+                break;
+            //구조체 정의: 이름에 구조체를 저장하고 endstruct 다음 줄로 건너뛰기 (Struct.cs)
+            case KeywordType.Struct:
+                if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
+                    throw new JyunoException("struct 다음에는 구조체 이름 하나만 와야 합니다.");
+                substitute_variable((string)tokens[1].value , new JyunoStructType(this , (string)tokens[1].value , line , map.Pair[line] , current , map.HasInnerStruct[line]));
                 jump(map.Pair[line] + 1);
                 break;
             //파라미터: 몇번째 param인지에 따라 인자를 받음 (인자가 부족하면 null)
@@ -461,10 +514,15 @@ public partial class Interpreter : IDisposable
                     throw new JyunoException("param은 함수가 호출되었을 때만 사용할수 있습니다.");
                 object?[] args = frames.Peek().Args;
                 int index = map.ParamIndex[line];
-                substitute_variable((string)tokens[1].value , new JyunoVariable(index < args.Length ? args[index] : null));
+                object? arg = index < args.Length ? args[index] : null;
+                //다시 실행될수 있는 param 줄(반복문 안, goto가 있는 함수)은 인자의 원래 값을 남겨둬야 하므로 소유권을 가져가지 않음
+                if (!map.ParamOnce[line])
+                    escape(arg);
+                declare_variable((string)tokens[1].value , arg);
                 break;
-            //함수의 끝 (함수 본문은 이 줄에 도달하면 끝남)
+            //함수/구조체의 끝 (본문은 이 줄에 도달하면 끝남)
             case KeywordType.EndFunc:
+            case KeywordType.EndStruct:
                 break;
         }
         return null;
@@ -491,22 +549,25 @@ public partial class Interpreter : IDisposable
         if (current.Variables.TryGetValue(name , out object? existing))
         {
             if (existing is VariableInterface vi)
-                vi.Set(value);
+                assign(vi , name , value);
             else
                 throw new JyunoException($"'{name}'은/는 변수가 아닙니다.");
             return;
         }
-        substitute_variable(name , new JyunoVariable(value));
+        declare_variable(name , value);
     }
 
     //함수 호출 정보 (인자, 반복 횟수)
     sealed class CallFrame
     {
-        public CallFrame(object?[] args)
+        public CallFrame(object?[] args , int inline_depth)
         {
             Args = args;
+            InlineDepth = inline_depth;
         }
         public readonly object?[] Args;
+        //이 호출이 시작될 때 진행중이던 인라인된 호출의 수 (이보다 많다면 가장 안쪽의 호출은 프레임이 없는 인라인된 호출)
+        public readonly int InlineDepth;
         public readonly Dictionary<int , long> RepeatCounts = new();
         public readonly Dictionary<int , ForState> ForStates = new();
     }
@@ -522,23 +583,69 @@ public partial class Interpreter : IDisposable
             this.interpreter = interpreter;
             this.line = line;
             this.end = end;
-            this.scope = scope;
+            Scope = scope;
         }
         readonly Interpreter interpreter;
         readonly int line, end;
-        //함수를 만든 영역 (함수 본문에서 읽을수 있는 바깥 변수)
-        readonly Scope scope;
-        public object? Execute(params object?[] args) => interpreter.call_function(line , end , scope , args);
+        //함수를 만든 영역 (함수 본문에서 읽을수 있는 바깥 변수, 구조체 함수라면 구조체 값의 영역)
+        public readonly Scope Scope;
+        //같은 함수를 다른 영역에 만듦 (구조체 값을 복사할때 사용)
+        public JyunoFunction Rebind(Scope scope) => new(interpreter , line , end , scope) { shape = shape , shape_known = shape_known };
+        //[실험] 인라이닝: 본문의 모양 (한번만 계산하고, 호출할 때마다 본문의 줄이 그대로인지만 확인)
+        InlineShape? shape;
+        bool shape_known;
+        //스크립트 안에서의 호출
+        public object? Call(object?[] args)
+        {
+            if (interpreter.Inlining)
+            {
+                //프로그램이 scripts의 줄을 바꿨다면 본문의 모양을 다시 계산
+                if (!shape_known || (shape is not null && !shape.Matches(interpreter.scripts)))
+                {
+                    shape = interpreter.inline_shape(line , end);
+                    shape_known = true;
+                }
+                if (shape is not null)
+                    return interpreter.call_inline(this , shape , args);
+            }
+            return interpreter.call_function(line , end , new Scope(Scope) , args);
+        }
+        //C# 프로그램에서의 호출: 주고받는 값은 인터프리터 밖의 값
+        public object? Execute(params object?[] args)
+        {
+            escape(args);
+            object? result = Call(args);
+            escape(result);
+            return result;
+        }
     }
-    object? call_function(int line , int end , Scope scope , object?[] args)
+    //스크립트에서 함수를 호출 (C# 함수라면 인자와 반환값은 인터프리터 밖으로 나갔다 들어온 값)
+    object? invoke_function(FunctionInterface function , object?[] args)
     {
-        if (frames.Count >= MaxCallDepth)
+        switch (function)
+        {
+            case JyunoFunction jyuno:
+                return jyuno.Call(args);
+            case JyunoStructType type:
+                return type.Call(args);
+            default:
+                escape(args);
+                object? result = function.Execute(args);
+                escape(result);
+                return result;
+        }
+    }
+    //함수/구조체 본문(line과 end 사이)을 body 영역에서 실행 (함수 안에서 만든 변수는 함수가 끝나면 사라짐)
+    object? call_function(int line , int end , Scope body , object?[] args)
+    {
+        if (frames.Count + inline_depth >= MaxCallDepth)
             throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
         int current_line = CurrentExecuteLine;
         Scope caller = current;
-        frames.Push(new CallFrame(args));
-        //함수 안에서 만든 변수는 함수가 끝나면 사라짐
-        current = new Scope(scope);
+        InlineShape? outer_frame = inline_frame;
+        frames.Push(new CallFrame(args , inline_depth));
+        current = body;
+        inline_frame = null;
         try
         {
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
@@ -554,10 +661,272 @@ public partial class Interpreter : IDisposable
         finally
         {
             current = caller;
+            inline_frame = outer_frame;
             frames.Pop();
             CurrentExecuteLine = current_line;
         }
     }
+    //[실험] 인라이닝 ---
+    //param 줄들과 return 한 줄로만 된 함수의 모양 (func 줄 → 모양, 인라인할수 없다면 null)
+    sealed class InlineShape
+    {
+        public InlineShape((int Line, int Index, string Name)[] parameters , int ret , int first , CommandLine[] lines)
+        {
+            Params = parameters;
+            Return = ret;
+            First = first;
+            Lines = lines;
+        }
+        public readonly (int Line, int Index, string Name)[] Params;
+        public readonly int Return;
+        //이 모양을 계산한 줄들 (func 줄부터 endfunc 줄까지)
+        public readonly int First;
+        public readonly CommandLine[] Lines;
+        //scripts의 줄이 모양을 계산했을 때와 같은지 (scripts는 공개된 목록이므로 프로그램이 실행 사이에 줄을 바꾸거나 끼워넣을수 있음)
+        public bool Matches(List<CommandLine> scripts)
+        {
+            CommandLine[] lines = Lines;
+            if (scripts.Count < First + lines.Length)
+                return false;
+            for (int i = 0 ; i < lines.Length ; i++)
+            {
+                if (!ReferenceEquals(scripts[First + i] , lines[i]))
+                    return false;
+            }
+            return true;
+        }
+        //영역을 만들지 않고 인자를 바로 읽는 return 식 (인라인할수 없는 식이라면 null)
+        public Func<object?>? Direct;
+        public bool DirectCompiled;
+    }
+    //return 식을 인라인용으로 컴파일하는 동안: 파라미터 이름 → 인자 번호
+    Dictionary<string , int>? inline_params;
+    bool inline_rejected;
+    //인라인된 호출의 인자 (호출마다 바꾸고 되돌림)
+    object?[] inline_args = Array.Empty<object?>();
+    //지금 실행중인 곳이 영역을 만들지 않고 인라인된 호출의 return 식이라면 그 함수의 모양 (그 안에서 다른 함수를 호출하는 동안에는 null)
+    InlineShape? inline_frame;
+    int? inline_slot(string name) => inline_params is not null && inline_params.TryGetValue(name , out int index) ? index : null;
+    //파라미터의 멤버 이름 (파라미터 이름 + "." + 멤버, 파라미터 이름에는 '.'이 없음)
+    (int Slot, string Member)? inline_member(string name)
+    {
+        if (inline_params is null)
+            return null;
+        int dot = name.IndexOf('.');
+        if (dot > 0 && dot < name.Length - 1 && inline_params.TryGetValue(name[..dot] , out int index))
+            return (index , name[(dot + 1)..]);
+        return null;
+    }
+    //파라미터 읽기: 인라인된 호출이 진행중이라면 인자를 바로 읽고, 함수 영역이 만들어진 뒤라면 원래대로(normal) 이름을 찾음
+    Expr slot_read(int index , Expr normal)
+    {
+        object? slot()
+        {
+            object?[] args = inline_args;
+            return index < args.Length ? args[index] : null;
+        }
+        Func<object?> normal_eval = normal.Eval;
+        //변수를 읽을 때와 같이 구조체 값이라면 복사본
+        Func<object?> eval = () => inline_frame is not null ? read(slot()) : normal_eval();
+        if (normal.Borrow is not Func<object?> normal_borrow)
+            return new Expr(eval) { MayEndEarly = normal.MayEndEarly };
+        Func<bool>? normal_hosted = normal.Hosted;
+        return new Expr(eval) {
+            Borrow = () => inline_frame is null ? normal_borrow() : EscapeAnalysis ? slot() : read(slot()) ,
+            //인자를 바로 읽는 동안에는 C# 코드가 실행되지 않음
+            Hosted = normal_hosted is null ? null : () => inline_frame is null && normal_hosted()
+        };
+    }
+    //인라인된 호출(영역을 만들지 않은 호출)이 진행중일때 C# 함수가 ExecuteLine()을 호출했다면, 그 줄이 함수 영역에서 실행되도록 영역을 만듦
+    //(이 뒤로는 파라미터도 이 영역의 변수에서 읽음)
+    void materialize_inline()
+    {
+        if (inline_frame is not InlineShape shape)
+            return;
+        object?[] args = inline_args;
+        inline_frame = null;
+        current = new Scope(current);
+        foreach (var (_ , index , name) in shape.Params)
+        {
+            object? arg = index < args.Length ? args[index] : null;
+            //구조체 인자는 이미 이 호출의 것이므로 그대로 변수에 넣음
+            if (arg is StructInstance instance)
+                instance.Fresh = true;
+            declare_variable(name , arg);
+        }
+    }
+    //return 식을 파라미터를 인자로 바로 읽도록 컴파일 (대입/복합 대입/레이블/삭제/상수 선언이 있다면 함수 영역에 이름이 생기므로 인라인하지 않음)
+    Func<object?>? compile_direct(InlineShape shape)
+    {
+        Token[] tokens = scripts[shape.Return].tokens;
+        //':'는 조건 연산자(a ? b : c)의 일부일수도 있으므로 '?'보다 많을 때만 레이블
+        int questions = 0, colons = 0;
+        foreach (Token token in tokens)
+        {
+            if (token.type is TokenType.Prefix && token.value is '=')
+                return null;
+            if (token.type is TokenType.Prefix && token.value is ':')
+                colons++;
+            if (token.type is TokenType.Operator && (string)token.value is string symbol)
+            {
+                if (Grammar.CompoundAssignment(symbol) is not null)
+                    return null;
+                if (symbol is "?")
+                    questions++;
+            }
+        }
+        if (colons > questions)
+            return null;
+        //파라미터 이름이 겹치거나 '.'이 있다면 구조체 파라미터의 멤버 이름과 서로 덮어쓸수 있으므로 인라인하지 않음
+        Dictionary<string , int> parameters = new();
+        foreach (var (_ , index , name) in shape.Params)
+        {
+            if (name.Contains('.') || !parameters.TryAdd(name , index))
+                return null;
+        }
+        inline_params = parameters;
+        inline_rejected = false;
+        try
+        {
+            Expr[] arguments = compile_keyword_arguments(tokens , 1);
+            if (inline_rejected)
+                return null;
+            if (arguments.Length is 0)
+                return () => null;
+            Func<object?> first = arguments[0].Eval;
+            if (arguments.Length is 1)
+                return first;
+            Func<object?>[] rest = Array.ConvertAll(arguments[1..] , o => o.Eval);
+            return () => {
+                object? value = first();
+                foreach (Func<object?> eval in rest)
+                    eval();
+                return value;
+            };
+        }
+        finally
+        {
+            inline_params = null;
+        }
+    }
+    readonly Dictionary<int , InlineShape?> inline_shapes = new();
+    //인라인된 호출의 깊이 (MaxCallDepth 검사에 포함)
+    int inline_depth = 0;
+
+    InlineShape? inline_shape(int line , int end)
+    {
+        if (inline_shapes.TryGetValue(line , out InlineShape? shape) && (shape is null || shape.Matches(scripts)))
+            return shape;
+        BlockMap map = get_blocks();
+        shape = null;
+        List<(int, int, string)> parameters = new();
+        int ret = -1;
+        bool ok = end < map.Count && map.Pair[line] == end;
+        for (int l = line + 1 ; ok && l < end ; l++)
+        {
+            Token[] tokens = scripts[l].tokens;
+            if (tokens.Length is 0)
+                continue;
+            //return 다음에는 실행되지 않는 줄이 있어도 되지만, 단순하게 하기 위해 인라인하지 않음
+            if (ret >= 0 || map.Errors[l] is not null || compiled_line(l).Error is not null || tokens[0].type is not TokenType.Keyword)
+            {
+                ok = false;
+                break;
+            }
+            switch ((KeywordType)tokens[0].value)
+            {
+                case KeywordType.Param when tokens.Length is 2 && tokens[1].type is TokenType.Name:
+                    parameters.Add((l , map.ParamIndex[l] , (string)tokens[1].value));
+                    break;
+                case KeywordType.Return:
+                    ret = l;
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+        }
+        if (ok && ret >= 0)
+            shape = new InlineShape(parameters.ToArray() , ret , line , scripts.GetRange(line , end - line + 1).ToArray());
+        inline_shapes[line] = shape;
+        return shape;
+    }
+
+    //함수 본문을 줄 단위로 실행하지 않고 바로 계산 (영역, 인자, 실행 위치, 오류는 call_function과 같음)
+    object? call_inline(JyunoFunction function , InlineShape shape , object?[] args)
+    {
+        if (frames.Count + inline_depth >= MaxCallDepth)
+            throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
+        int current_line = CurrentExecuteLine;
+        Scope caller = current;
+        if (!shape.DirectCompiled)
+        {
+            shape.Direct = compile_direct(shape);
+            shape.DirectCompiled = true;
+        }
+        InlineShape? outer_frame = inline_frame;
+        if (shape.Direct is Func<object?> direct)
+        {
+            //파라미터가 받는 구조체 인자는 param처럼 소유권을 가져오거나 복사함 (인라인된 본문의 구조체 함수가 필드를 바꿀수 있으므로)
+            int count = Math.Min(args.Length , shape.Params.Length);
+            for (int i = 0 ; i < count ; i++)
+            {
+                if (args[i] is not StructInstance)
+                    continue;
+                args = (object?[])args.Clone();
+                for (int j = i ; j < count ; j++)
+                {
+                    if (args[j] is StructInstance instance)
+                        args[j] = take(instance);
+                }
+                break;
+            }
+            object?[] outer_args = inline_args;
+            //파라미터가 아닌 이름은 함수를 만든 영역에서 찾음 (함수 영역에는 파라미터만 있으므로 결과가 같음)
+            current = function.Scope;
+            inline_args = args;
+            inline_frame = shape;
+            inline_depth++;
+            try
+            {
+                CurrentExecuteLine = shape.Return;
+                return direct();
+            }
+            finally
+            {
+                current = caller;
+                inline_args = outer_args;
+                inline_frame = outer_frame;
+                inline_depth--;
+                CurrentExecuteLine = current_line;
+            }
+        }
+        object?[] caller_args = inline_args;
+        current = new Scope(function.Scope);
+        inline_args = args;
+        inline_frame = null;
+        inline_depth++;
+        try
+        {
+            foreach (var (line , index , name) in shape.Params)
+            {
+                CurrentExecuteLine = line;
+                declare_variable(name , index < args.Length ? args[index] : null);
+            }
+            CurrentExecuteLine = shape.Return;
+            object?[] ret = compiled_line(shape.Return).Arguments();
+            return ret.Length is 0 ? null : ret[0];
+        }
+        finally
+        {
+            current = caller;
+            inline_args = caller_args;
+            inline_frame = outer_frame;
+            inline_depth--;
+            CurrentExecuteLine = current_line;
+        }
+    }
+
     //함수 안에서 발생한 문법 오류를 Run()/ExecuteLine()까지 전달
     sealed class GrammarErrorException : JyunoException
     {
@@ -571,14 +940,18 @@ public partial class Interpreter : IDisposable
     //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
     internal sealed class BlockMap
     {
-        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc
+        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc, struct ↔ endstruct
         public readonly int[] Pair;
         //블록 구조가 잘못된 줄의 오류 메시지
         public readonly string?[] Errors;
-        //각 줄이 속한 가장 안쪽 func 줄 (함수 밖이라면 -1)
+        //각 줄이 속한 가장 안쪽 func/struct 줄 (함수 밖이라면 -1)
         public readonly int[] Owner;
         //param 줄이 함수의 몇번째 파라미터인지
         public readonly int[] ParamIndex;
+        //param 줄이 함수 호출 한번에 최대 한번만 실행되는지 (반복문 안이 아니고, 함수에 goto가 없음)
+        public readonly bool[] ParamOnce;
+        //struct 줄: 그 구조체 안에(구조체 함수 안 포함) 다른 struct가 있는지
+        public readonly bool[] HasInnerStruct;
         public int Count => Pair.Length;
 
         public BlockMap(List<CommandLine> scripts) : this(scripts.Select(o => o.tokens).ToArray()) { }
@@ -589,6 +962,9 @@ public partial class Interpreter : IDisposable
             Errors = new string?[lines.Count];
             Owner = new int[lines.Count];
             ParamIndex = new int[lines.Count];
+            ParamOnce = new bool[lines.Count];
+            HasInnerStruct = new bool[lines.Count];
+            HashSet<int> has_goto = new();
             Array.Fill(Pair , -1);
             Stack<int> opened = new();
             List<(int line, int loop)> breaks = new();
@@ -598,12 +974,19 @@ public partial class Interpreter : IDisposable
                 Token[] tokens = lines[line];
                 return tokens.Length > 0 && tokens[0].type is TokenType.Keyword ? (KeywordType)tokens[0].value : null;
             }
+            //func와 struct는 본문을 따로 실행하는 블록 (goto/break로 넘나들수 없고, param의 순서를 따로 셈)
+            bool is_body(int line) => keyword_at(line) is KeywordType.Func or KeywordType.Struct;
             //닫히지 않은 블록 표시
             void unclosed(int line)
             {
                 if (keyword_at(line) is KeywordType.Func)
                 {
                     Errors[line] = "func 키워드는 endfunc 키워드로 종료 표시가 있어야 합니다.";
+                    return;
+                }
+                if (keyword_at(line) is KeywordType.Struct)
+                {
+                    Errors[line] = "struct 키워드는 endstruct 키워드로 종료 표시가 있어야 합니다.";
                     return;
                 }
                 Errors[line] = "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.";
@@ -614,12 +997,20 @@ public partial class Interpreter : IDisposable
 
             for (int line = 0 ; line < lines.Count ; line++)
             {
-                Owner[line] = opened.FirstOrDefault(o => keyword_at(o) is KeywordType.Func , -1);
+                Owner[line] = opened.FirstOrDefault(is_body , -1);
                 KeywordType? keyword = keyword_at(line);
                 if (keyword is null)
                     continue;
-                if (keyword is KeywordType.Func || Grammar.Conditionals.Contains(keyword.Value))
+                if (keyword is KeywordType.Func or KeywordType.Struct || Grammar.Conditionals.Contains(keyword.Value))
                 {
+                    if (keyword is KeywordType.Struct)
+                    {
+                        foreach (int o in opened)
+                        {
+                            if (keyword_at(o) is KeywordType.Struct)
+                                HasInnerStruct[o] = true;
+                        }
+                    }
                     opened.Push(line);
                     continue;
                 }
@@ -633,8 +1024,8 @@ public partial class Interpreter : IDisposable
                             Errors[line] = "else는 if와 end 사이에 한번만 쓸수 있습니다.";
                         break;
                     case KeywordType.End:
-                        //func는 end가 아닌 endfunc로 닫아야 함
-                        if (!opened.TryPeek(out int opener) || keyword_at(opener) is KeywordType.Func)
+                        //func/struct는 end가 아닌 endfunc/endstruct로 닫아야 함
+                        if (!opened.TryPeek(out int opener) || is_body(opener))
                         {
                             Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다.";
                             break;
@@ -648,10 +1039,12 @@ public partial class Interpreter : IDisposable
                         Pair[line] = opener;
                         break;
                     case KeywordType.EndFunc:
+                    case KeywordType.EndStruct:
+                        bool is_func = keyword is KeywordType.EndFunc;
                         int func = Owner[line];
-                        if (func < 0)
+                        if (func < 0 || (keyword_at(func) is KeywordType.Func) != is_func)
                         {
-                            Errors[line] = "endfunc와 짝이 되는 func 키워드가 없습니다.";
+                            Errors[line] = is_func ? "endfunc와 짝이 되는 func 키워드가 없습니다." : "endstruct와 짝이 되는 struct 키워드가 없습니다.";
                             break;
                         }
                         //함수 안에서 닫히지 않은 블록
@@ -667,7 +1060,7 @@ public partial class Interpreter : IDisposable
                         foreach (int o in opened)
                         {
                             KeywordType? kind = keyword_at(o);
-                            if (kind is KeywordType.Func)
+                            if (kind is KeywordType.Func or KeywordType.Struct)
                                 break;
                             if (kind is not KeywordType.If)
                             {
@@ -684,14 +1077,31 @@ public partial class Interpreter : IDisposable
                         //함수의 몇번째 param인지 기록
                         if (Owner[line] < 0)
                         {
-                            Errors[line] = "param은 func와 endfunc 사이에서만 쓸수 있습니다.";
+                            Errors[line] = "param은 func와 endfunc(또는 struct와 endstruct) 사이에서만 쓸수 있습니다.";
                             break;
                         }
                         param_counts.TryGetValue(Owner[line] , out int index);
                         ParamIndex[line] = index;
                         param_counts[Owner[line]] = index + 1;
+                        ParamOnce[line] = true;
+                        foreach (int o in opened)
+                        {
+                            KeywordType? kind = keyword_at(o);
+                            if (kind is KeywordType.Func or KeywordType.Struct)
+                                break;
+                            if (kind is not KeywordType.If)
+                                ParamOnce[line] = false;
+                        }
+                        break;
+                    case KeywordType.Goto:
+                        has_goto.Add(Owner[line]);
                         break;
                 }
+            }
+            for (int line = 0 ; line < lines.Count ; line++)
+            {
+                if (ParamOnce[line] && has_goto.Contains(Owner[line]))
+                    ParamOnce[line] = false;
             }
             //end/endfunc로 닫히지 않은 블록
             foreach (int line in opened)

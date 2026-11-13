@@ -1,0 +1,27 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+a = pt 1 2
+l = list a
+console.writeline (equal a l)
+console.writeline (equal l a)
+console.writeline (equal a (l 0))
+console.writeline (equal (l 0) a)
+console.writeline (equal (l 0) (l 0))
+console.writeline (equal a 5)
+console.writeline (equal a null)
+console.writeline (equal a "pt { x = 1, y = 2 }")
+console.writeline (equal a true)

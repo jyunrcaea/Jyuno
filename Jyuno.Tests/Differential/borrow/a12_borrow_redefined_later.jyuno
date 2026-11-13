@@ -1,0 +1,31 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+a = pt 1 2
+b = pt 1 2
+i = 0
+while (less i 3)
+  console.writeline (equal a b)
+  if (equal i 1)
+    func equal
+      param p
+      param q
+      p.x = 100
+      return (host.show p q a b)
+    endfunc
+  end
+  i = add i 1
+end

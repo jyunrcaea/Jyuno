@@ -5,6 +5,9 @@ namespace Jyuno.Language;
 //Jyuno 값(object?)의 숫자 변환/비교를 위한 도구
 internal static class Values
 {
+    //오류 메시지에 넣을 값 (문화권과 무관하게, null은 "null")
+    public static string Show(object? value) => value is null ? "null" : Convert.ToString(value , CultureInfo.InvariantCulture) ?? string.Empty;
+
     //정수형 값이라면 long으로 꺼냄 (박싱된 long을 (int)로 캐스팅하면 예외가 나므로)
     public static bool TryGetInteger(object? value , out long result)
     {
@@ -76,6 +79,9 @@ internal static class Values
     //equal 명령어: 숫자끼리는 값으로 비교하고, 그 외에는 Equals로 비교 (타입이 달라도 예외가 나지 않음)
     public static bool Same(object? a , object? b)
     {
+        //구조체가 ==를 다시 정의했다면 그 결과 (1.6.0부터)
+        if (a is StructValue && Overloads.Equal(a , b) is bool equal)
+            return equal;
         if (TryGetInteger(a , out long integer_a) && TryGetInteger(b , out long integer_b))
             return integer_a == integer_b;
         if (TryGetReal(a , out double real_a) && TryGetReal(b , out double real_b))
@@ -87,6 +93,9 @@ internal static class Values
     //NaN처럼 순서를 매길수 없다면 null
     public static int? Compare(object? a , object? b)
     {
+        //구조체가 <, >를 다시 정의했다면 그 결과 (1.6.0부터)
+        if ((a is StructValue || b is StructValue) && Overloads.Order(a , b) is int order)
+            return order;
         if (TryGetInteger(a , out long integer_a) && TryGetInteger(b , out long integer_b))
             return integer_a.CompareTo(integer_b);
         if (TryGetReal(a , out double real_a) && TryGetReal(b , out double real_b))

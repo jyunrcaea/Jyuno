@@ -32,12 +32,13 @@ public sealed class VariableExpression : Expression
 /// <summary>식 맨 앞의 이름: 함수라면 호출, 변수라면 값 (인자가 있고 배열/리스트라면 원소 읽기/쓰기)</summary>
 public sealed class CallExpression : Expression
 {
-    internal CallExpression(string name , IReadOnlyList<Expression> arguments , bool has_arguments , bool closed)
+    internal CallExpression(string name , IReadOnlyList<Expression> arguments , bool has_arguments , bool closed , bool keyword_argument = false)
     {
         Name = name;
         Arguments = arguments;
         HasArguments = has_arguments;
         Closed = closed;
+        IsKeywordArgument = keyword_argument;
     }
     public string Name { get; }
     public IReadOnlyList<Expression> Arguments { get; }
@@ -45,6 +46,11 @@ public sealed class CallExpression : Expression
     public bool HasArguments { get; }
     /// <summary>괄호 안의 식인지</summary>
     public bool Closed { get; }
+    /// <summary>
+    /// 키워드(if, return 등) 인자의 연산자 식에 괄호 없이 쓴 이름인지 (1.6.0부터).
+    /// 인자 없이 쓴 이름이 없다면 오류 메시지가 '알수없는 변수/함수'이고, 그 외에는 '존재하지 않는 함수/변수/명령어'
+    /// </summary>
+    public bool IsKeywordArgument { get; }
     public override bool MayEndEarly => Closed && HasArguments;
 }
 
@@ -93,6 +99,52 @@ public sealed class UnclosedParenthesisExpression : Expression
     public Expression Inner { get; }
 }
 
+/// <summary>이항 연산자 식 (a + b, a == b, a &amp;&amp; b 등, 1.6.0부터). 함수 호출은 연산자보다 먼저 묶임</summary>
+public sealed class BinaryExpression : Expression
+{
+    internal BinaryExpression(string op , Expression left , Expression right) { Operator = op; Left = left; Right = right; }
+    /// <summary>연산자 기호 (+, -, *, /, %, &lt;&lt;, &gt;&gt;, &lt;, &gt;, &lt;=, &gt;=, ==, !=, &amp;, ^, |, &amp;&amp;, ||, ??)</summary>
+    public string Operator { get; }
+    public Expression Left { get; }
+    public Expression Right { get; }
+    /// <summary>오른쪽 식을 필요할 때만 계산하는지 (&amp;&amp;, ||, ??)</summary>
+    public bool IsShortCircuit => Operator is "&&" or "||" or "??";
+}
+
+/// <summary>단항 연산자 식 (-a, +a, !a, ~a, 1.6.0부터)</summary>
+public sealed class UnaryExpression : Expression
+{
+    internal UnaryExpression(string op , Expression operand) { Operator = op; Operand = operand; }
+    public string Operator { get; }
+    public Expression Operand { get; }
+}
+
+/// <summary>조건 연산자 식 (조건 ? 참일때 : 거짓일때, 1.6.0부터)</summary>
+public sealed class ConditionalExpression : Expression
+{
+    internal ConditionalExpression(Expression condition , Expression when_true , Expression when_false) { Condition = condition; WhenTrue = when_true; WhenFalse = when_false; }
+    public Expression Condition { get; }
+    public Expression WhenTrue { get; }
+    public Expression WhenFalse { get; }
+}
+
+/// <summary>(이름) (연산자)= (값): 복합 대입 (x += 1은 x = x + 1, 1.6.0부터)</summary>
+public sealed class CompoundAssignExpression : Expression
+{
+    internal CompoundAssignExpression(string name , string op , Expression value) { Name = name; Operator = op; Value = value; }
+    public string Name { get; }
+    /// <summary>계산할 이항 연산자 (x += 1이라면 +)</summary>
+    public string Operator { get; }
+    public Expression Value { get; }
+}
+
+/// <summary>연산자를 잘못 쓴 식 (실행하면 Message 오류, 1.6.0부터)</summary>
+public sealed class SyntaxErrorExpression : Expression
+{
+    internal SyntaxErrorExpression(string message) { Message = message; }
+    public string Message { get; }
+}
+
 /// <summary>처리할수 없는 식 (식 맨 앞의 키워드 등, 실행하면 '처리할수 없습니다.' 오류)</summary>
 public sealed class InvalidExpression : Expression
 {
@@ -114,7 +166,9 @@ public enum StatementKind
     Goto,
     Break,
     Param,
-    Local
+    Local,
+    /// <summary>struct ~ endstruct (FunctionStatement, 1.5.0부터)</summary>
+    Struct
 }
 
 /// <summary>문장 (줄 하나, 또는 블록 하나)</summary>
@@ -138,7 +192,7 @@ public class Statement
     public Scope Scope { get; internal set; } = null!;
     /// <summary>이 문장이 들어있는 함수 (최상위라면 null)</summary>
     public FunctionStatement? Function => Parent.Function;
-    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat는 키워드 다음부터, for는 이름 다음부터)</summary>
+    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat는 키워드 다음부터, for는 이름 다음부터, 1.6.0부터 인자 하나하나가 식이며 이름 다음에 값이 있다면 함수 호출)</summary>
     public IReadOnlyList<Expression> Arguments { get; internal set; } = Array.Empty<Expression>();
 }
 
@@ -193,14 +247,19 @@ public sealed class ForStatement : BlockStatement
     public Scope InnerScope { get; internal set; } = null!;
 }
 
+/// <summary>func ~ endfunc, 또는 struct ~ endstruct (Kind가 StatementKind.Struct, 본문은 생성자)</summary>
 public sealed class FunctionStatement : BlockStatement
 {
-    internal FunctionStatement(int line) : base(StatementKind.Func , line) { }
-    /// <summary>함수 이름 (형식이 잘못되었다면 null)</summary>
+    internal FunctionStatement(int line , StatementKind kind = StatementKind.Func) : base(kind , line) { }
+    /// <summary>struct로 만든 구조체인지</summary>
+    public bool IsStruct => Kind is StatementKind.Struct;
+    /// <summary>함수(또는 구조체) 이름 (형식이 잘못되었거나 연산자 함수라면 null)</summary>
     public string? Name { get; internal set; }
+    /// <summary>구조체 안에서 연산자를 다시 정의하는 함수(func +)라면 그 연산자 기호 (1.6.0부터)</summary>
+    public string? Operator { get; internal set; }
     public int ParameterCount { get; internal set; }
     public Block Body { get; internal set; } = null!;
-    /// <summary>호출 한번마다 새로 만들어지는 영역</summary>
+    /// <summary>호출 한번마다 새로 만들어지는 영역 (구조체라면 구조체 값 하나의 영역)</summary>
     public Scope InnerScope { get; internal set; } = null!;
     /// <summary>이 함수 안(안쪽 함수 제외)의 goto</summary>
     public IReadOnlyList<GotoStatement> Gotos => gotos;

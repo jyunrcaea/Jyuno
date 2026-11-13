@@ -1,0 +1,21 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func nd
+  param p
+  return (list (p.x = 50) p.x p (p.q = 3) p.q (local =) )
+endfunc
+console.writeline (host.show (nd (pt 1 2)))

@@ -198,7 +198,7 @@ public static class JyunoProgramImage
                 case IrRead r: name(r.Name); break;
                 case IrCall call:
                     name(call.Name);
-                    body.Byte((byte)((call.HasArguments ? 1 : 0) | (call.Closed ? 2 : 0)));
+                    body.Byte((byte)((call.HasArguments ? 1 : 0) | (call.Closed ? 2 : 0) | (call.Keyword ? 4 : 0)));
                     expressions(call.Arguments);
                     break;
                 case IrIntrinsic intrinsic:
@@ -477,9 +477,9 @@ public static class JyunoProgramImage
                 {
                     IrName n = read_name();
                     byte flags = r.Byte();
-                    if (flags > 3)
+                    if (flags > 7)
                         throw bad("호출 형식이 올바르지 않습니다.");
-                    result = new IrCall(n , expressions(line) , (flags & 1) != 0 , (flags & 2) != 0);
+                    result = new IrCall(n , expressions(line) , (flags & 1) != 0 , (flags & 2) != 0 , (flags & 4) != 0);
                     break;
                 }
                 case IrOp.Intrinsic:

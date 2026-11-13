@@ -1,0 +1,33 @@
+struct s
+  param x
+  param y
+  func drop
+    x =
+    return y
+  endfunc
+  func show
+    return (host.show x y)
+  endfunc
+endstruct
+x = "outer"
+a = s 1 2
+b = a
+console.writeline (a.drop)
+console.writeline (host.show a b)
+console.writeline (a.show)
+console.writeline (b.show)
+c = a
+console.writeline (host.show c)
+console.writeline (c.show)
+func f
+  param p
+  return (list (p.drop) p (p.show) p.x)
+endfunc
+console.writeline (host.show (f b) b)
+func g
+  param p
+  p.drop
+  return p
+endfunc
+d = g b
+console.writeline (host.show d b (d.show))

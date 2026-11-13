@@ -305,13 +305,14 @@ public partial class Interpreter
             var find = resolver(call.Name);
             Func<Frame , object?[]> args = arguments(list(call.Arguments));
             bool has_arguments = call.HasArguments, closed = call.Closed;
+            string missing = call.Missing;
             //전역 함수만 가리키는 이름: 연결할 때 정해진 함수를 바로 호출
             if (call.Name.Candidates.Length is 0 && call.Name.Import >= 0 && imports[call.Name.Import] is FunctionInterface fixed_function)
                 return f => fixed_function.Execute(args(f));
             return f => {
                 object? holder = find(f);
                 if (holder is null)
-                    throw new JyunoException($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
+                    throw new JyunoException(missing);
                 if (holder is FunctionInterface fi)
                     return fi.Execute(args(f));
                 if (holder is VariableInterface vi)

@@ -1,0 +1,16 @@
+x = 10
+func q
+    return x
+endfunc
+console.writeline (q)
+x = 20
+console.writeline (q)
+func r
+    param y
+    return (add x y)
+endfunc
+x =
+x = 5
+console.writeline (r 1)
+add =
+console.writeline (r 1)

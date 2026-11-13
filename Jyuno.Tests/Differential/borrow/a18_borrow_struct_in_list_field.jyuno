@@ -1,0 +1,37 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct bag
+  param l
+  func setl
+    param v
+    l = v
+  endfunc
+endstruct
+nan = host.nan
+a = bag (list (pt nan 1) (pt 2 3))
+console.writeline (equal a a)
+b = bag (list (pt 1 1) (pt 2 3))
+console.writeline (equal b b)
+sh = list (pt 1 1) (list (pt nan 0))
+a.setl sh
+b.setl sh
+console.writeline (equal a b)
+sh3 = list (pt 1 1) (list (pt 0 0))
+a.setl sh3
+b.setl sh3
+console.writeline (equal a b)
+console.writeline (equal a a)

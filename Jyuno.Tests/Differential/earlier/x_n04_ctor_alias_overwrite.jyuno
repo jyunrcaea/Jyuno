@@ -1,0 +1,15 @@
+struct pt
+    param x
+    param y
+endstruct
+struct box
+    param p
+    local p.y = 77
+    7 = p.x
+endstruct
+b = box (pt 1 2)
+console.writeline (string b)
+console.writeline b.p.y
+console.writeline b.p.x
+c = b
+console.writeline c.p.y

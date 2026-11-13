@@ -1,0 +1,21 @@
+struct vec
+    param x
+    param y
+    func plus
+        param o
+        return (vec (add x o.x) (add y o.y))
+    endfunc
+    func scale
+        param k
+        return (vec (mul x k) (mul y k))
+    endfunc
+endstruct
+v = vec 1 2
+w = v.plus (vec 3 4)
+console.writeline (string w)
+u = (w.plus w).scale 2
+console.writeline (string u)
+a = list v w
+b = (a 0).plus (a 1)
+console.writeline (string b)
+console.writeline (string a)

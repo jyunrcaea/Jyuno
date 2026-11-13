@@ -9,7 +9,9 @@ public enum NameKinds
     /// <summary>함수 (func)</summary>
     Function = 2,
     /// <summary>상수 ((상수) = (이름))</summary>
-    Constant = 4
+    Constant = 4,
+    /// <summary>구조체 (struct, 1.5.0부터)</summary>
+    Struct = 8
 }
 
 public enum ScopeKind
@@ -19,7 +21,9 @@ public enum ScopeKind
     /// <summary>함수 호출 한번</summary>
     Function,
     /// <summary>for 문의 반복 한번</summary>
-    For
+    For,
+    /// <summary>구조체 값 하나 (생성자와 구조체 함수의 바깥 영역, 1.5.0부터)</summary>
+    Struct
 }
 
 /// <summary>

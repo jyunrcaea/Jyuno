@@ -1,0 +1,23 @@
+struct bag
+  param l
+endstruct
+func getl
+  param b
+  return b.l
+endfunc
+func getl2
+  param b
+  return (list b.l b.l (list.push b.l 9) b.l)
+endfunc
+g = bag (list 1 2)
+x = getl g
+list.push x 3
+console.writeline (host.show g x)
+y = getl2 g
+console.writeline (host.show g y)
+z = getl (bag x)
+list.push z 4
+console.writeline (host.show x z)
+w = getl (host.keep g)
+list.push w 5
+console.writeline (host.show g w (host.get))

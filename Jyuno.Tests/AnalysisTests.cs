@@ -27,6 +27,62 @@ public class AnalysisTests
         Assert.Equal("y" , Assert.IsType<VariableExpression>(inner.Arguments[0]).Name);
     }
 
+    //연산자 식 (1.6.0): 인터프리터와 같은 우선순위로 나뉨, 함수 호출이 먼저 묶임
+    [Fact]
+    public void OperatorTree()
+    {
+        var a = Analyze("x = f a + b * -c ?? d ? 1 : 2" , "y += 1" , "if i < length l && !done" , "end" , "return point (x + 1) y");
+        var s = a.Root!.Statements;
+        var conditional = Assert.IsType<ConditionalExpression>(Assert.IsType<AssignExpression>(Assert.IsType<ExpressionStatement>(s[0]).Expression).Value);
+        var coalesce = Assert.IsType<BinaryExpression>(conditional.Condition);
+        Assert.Equal("??" , coalesce.Operator);
+        Assert.True(coalesce.IsShortCircuit);
+        var plus = Assert.IsType<BinaryExpression>(coalesce.Left);
+        Assert.Equal("+" , plus.Operator);
+        var call = Assert.IsType<CallExpression>(plus.Left);
+        Assert.Equal("f" , call.Name);
+        Assert.Equal("a" , Assert.IsType<VariableExpression>(Assert.Single(call.Arguments)).Name);
+        var times = Assert.IsType<BinaryExpression>(plus.Right);
+        Assert.Equal("*" , times.Operator);
+        var negate = Assert.IsType<UnaryExpression>(times.Right);
+        Assert.Equal("-" , negate.Operator);
+        Assert.Equal(1L , Assert.IsType<ConstantExpression>(conditional.WhenTrue).Value);
+
+        var compound = Assert.IsType<CompoundAssignExpression>(Assert.IsType<ExpressionStatement>(s[1]).Expression);
+        Assert.Equal(("y" , "+") , (compound.Name , compound.Operator));
+
+        var and = Assert.IsType<BinaryExpression>(Assert.Single(s[2].Arguments));
+        Assert.Equal("&&" , and.Operator);
+        var less = Assert.IsType<BinaryExpression>(and.Left);
+        Assert.Equal("length" , Assert.IsType<CallExpression>(less.Right).Name);
+        Assert.Equal("!" , Assert.IsType<UnaryExpression>(and.Right).Operator);
+
+        //키워드 다음의 이름도 함수 호출
+        var point = Assert.IsType<CallExpression>(Assert.Single(s[3].Arguments));
+        Assert.Equal(2 , point.Arguments.Count);
+        Assert.IsType<BinaryExpression>(point.Arguments[0]);
+        //키워드 인자 자리의 이름 (괄호 안은 아님): 이름이 없을 때의 오류 메시지가 다름
+        Assert.True(point.IsKeywordArgument);
+        Assert.True(Assert.IsType<CallExpression>(less.Left).IsKeywordArgument);
+        Assert.False(call.IsKeywordArgument);
+        var paren = Analyze("return (x) + y").Root!.Statements[0];
+        var sum = Assert.IsType<BinaryExpression>(Assert.Single(paren.Arguments));
+        Assert.False(Assert.IsType<CallExpression>(sum.Left).IsKeywordArgument);
+        Assert.True(Assert.IsType<CallExpression>(sum.Right).IsKeywordArgument);
+    }
+
+    [Fact]
+    public void OperatorFunctionAndErrors()
+    {
+        var a = Analyze("struct p" , "  func ==" , "    param o" , "    return true" , "  endfunc" , "endstruct" , "x = 1 +" , "y = * 2");
+        var structure = Assert.IsType<FunctionStatement>(a.Root!.Statements[0]);
+        var op = Assert.IsType<FunctionStatement>(structure.Body.Statements[0]);
+        Assert.Null(op.Name);
+        Assert.Equal("==" , op.Operator);
+        Assert.IsType<SyntaxErrorExpression>(Assert.IsType<AssignExpression>(Assert.IsType<ExpressionStatement>(a.Root.Statements[1]).Expression).Value);
+        Assert.IsType<SyntaxErrorExpression>(Assert.IsType<AssignExpression>(Assert.IsType<ExpressionStatement>(a.Root.Statements[2]).Expression).Value);
+    }
+
     [Fact]
     public void SpecialExpressions()
     {

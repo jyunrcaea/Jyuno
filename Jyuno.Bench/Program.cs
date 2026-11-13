@@ -428,11 +428,8 @@ static class Program
                     {
                         TypeCheckResult result;
                         long t = Stopwatch.GetTimestamp();
-                        try
-                        {
-                            result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , JyunoTypeChecker.JyunoWebHost);
-                        }
-                        catch (JyunoBuildException)
+                        result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , JyunoTypeChecker.JyunoWebHost);
+                        if (result.Restricted)
                         {
                             restricted++;
                             continue;

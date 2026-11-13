@@ -1,0 +1,6 @@
+func h
+    param x
+    return x
+    console.writeline "never"
+endfunc
+console.writeline (h 5)

@@ -1,0 +1,42 @@
+#!dump a b
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  param p
+  return p.x
+endfunc
+a = pt 1 2
+console.writeline (f a)
+#!chunk
+func f
+  param p
+  return p.y
+endfunc
+b = a
+b.move 5
+console.writeline (f a)
+console.writeline (f b)
+#!chunk
+console.writeline (host.show (a.plus b))
+func g
+  param p
+  return (f p)
+endfunc
+console.writeline (g a)
+#!chunk
+console.writeline (g b)
+return (a.plus b)

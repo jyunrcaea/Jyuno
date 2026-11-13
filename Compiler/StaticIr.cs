@@ -29,7 +29,7 @@ internal sealed class IrName
     public readonly int Import;
 }
 
-internal enum IrOp : byte { Const, Read, Call, Intrinsic, Assign, ConstDef, Label, Paren, Unclosed }
+internal enum IrOp : byte { Const, Read, Call, Intrinsic, Assign, ConstDef, Label, Paren, Unclosed, Operator }
 
 internal abstract class IrExpr
 {
@@ -49,16 +49,20 @@ internal sealed class IrRead : IrExpr
 }
 internal sealed class IrCall : IrExpr
 {
-    public IrCall(IrName name , IrExpr[] arguments , bool has_arguments , bool closed)
+    public IrCall(IrName name , IrExpr[] arguments , bool has_arguments , bool closed , bool keyword = false)
     {
         Name = name;
         Arguments = arguments;
         HasArguments = has_arguments;
         Closed = closed;
+        Keyword = keyword;
     }
     public readonly IrName Name;
     public readonly IrExpr[] Arguments;
-    public readonly bool HasArguments, Closed;
+    //Keyword: 키워드(if, return 등) 인자의 연산자 식에 괄호 없이 쓴 이름 (1.6.0부터)
+    public readonly bool HasArguments, Closed, Keyword;
+    //이름이 없을 때의 오류 (Compiler/LineCompiler.cs와 같음)
+    public string Missing => Keyword && !HasArguments ? $"'{Name.Name}'은/는 알수없는 변수/함수 입니다." : $"'{Name.Name}'은/는 존재하지 않는 함수/변수/명령어 입니다.";
     public override IrOp Op => IrOp.Call;
 }
 //내장 함수 호출 (인자 1~3개, 가드 없음)
@@ -98,6 +102,15 @@ internal sealed class IrParen : IrExpr
     //true: ')' 전에 끝났다면 오류 (ParenthesisExpression), false: 닫히지 않은 괄호 (계산 후 항상 오류)
     public readonly bool Closed;
     public override IrOp Op => Closed ? IrOp.Paren : IrOp.Unclosed;
+}
+//1.6.0 연산자 (a + b, -a, c ? a : b). 타입 검사에서만 만듦 (제한 모드 실행 엔진은 아직 지원하지 않음)
+internal sealed class IrOperator : IrExpr
+{
+    public IrOperator(string symbol , IrExpr[] operands) { Symbol = symbol; Operands = operands; }
+    //이항: + - * / % << >> < > <= >= == != & ^ | && || ??, 단항: "u-" "u+" "u!" "u~", 조건: "?:"
+    public readonly string Symbol;
+    public readonly IrExpr[] Operands;
+    public override IrOp Op => IrOp.Operator;
 }
 
 internal enum IrKind : byte { Expression, If, While, Repeat, For, Func, Return, Goto, Break, Param, Local, Empty }
@@ -164,17 +177,21 @@ internal sealed class IrBuilder
     readonly List<(IrStmt ir, Statement source)> fixups = new();
     int statement_count;
 
-    IrBuilder(ScriptAnalysis analysis , Runtime profile)
+    readonly bool operators;
+
+    IrBuilder(ScriptAnalysis analysis , Runtime profile , bool operators)
     {
+        this.operators = operators;
         this.analysis = analysis;
         globals = profile.GetGlobals();
         objects = profile.Global;
     }
 
-    public static IrProgram Build(IReadOnlyList<string> lines , Runtime profile)
+    /// <param name="operators">1.6.0 연산자를 IrOperator로 만들지 (타입 검사용). false라면 제한 모드 오류</param>
+    public static IrProgram Build(IReadOnlyList<string> lines , Runtime profile , bool operators = false)
     {
         ScriptAnalysis analysis = ScriptAnalysis.Analyze(lines);
-        IrBuilder builder = new(analysis , profile);
+        IrBuilder builder = new(analysis , profile , operators);
         builder.errors.AddRange(analysis.CheckNativeJs(builder.globals));
         if (analysis.Root is null || builder.errors.Count > 0)
             throw new JyunoBuildException(builder.errors);
@@ -310,6 +327,11 @@ internal sealed class IrBuilder
             case FunctionStatement function:
             {
                 IrStmt ir = make(IrKind.Func , source);
+                if (function.IsStruct || function.Operator is not null)
+                {
+                    error(function.Line , "제한 모드: 구조체는 아직 지원하지 않습니다.");
+                    return ir;
+                }
                 if (function.Name is null)
                 {
                     error(function.Line , "func 다음에는 함수 이름 하나만 와야 합니다.");
@@ -431,7 +453,7 @@ internal sealed class IrBuilder
                     if (Interpreter.SupportsIntrinsic(native.Intrinsic , arguments.Length))
                         return new IrIntrinsic(target.Import , arguments);
                 }
-                return new IrCall(target , arguments , call.HasArguments , call.Closed);
+                return new IrCall(target , arguments , call.HasArguments , call.Closed , call.IsKeywordArgument);
             }
             case AssignExpression assign:
                 return new IrAssign(name(assign.Name , scope) , slot_of(scope , assign.Name) , expression(assign.Value , scope , line));
@@ -449,6 +471,24 @@ internal sealed class IrBuilder
             }
             case UnclosedParenthesisExpression unclosed:
                 return new IrParen(expression(unclosed.Inner , scope , line) , false);
+            case BinaryExpression or UnaryExpression or ConditionalExpression or CompoundAssignExpression when !operators:
+                error(line , "제한 모드: 연산자(1.6.0)는 아직 지원하지 않습니다.");
+                return new IrConst(null);
+            case BinaryExpression binary:
+                return new IrOperator(binary.Operator , new[] { expression(binary.Left , scope , line) , expression(binary.Right , scope , line) });
+            case UnaryExpression unary:
+                return new IrOperator("u" + unary.Operator , new[] { expression(unary.Operand , scope , line) });
+            case ConditionalExpression conditional:
+                return new IrOperator("?:" , new[] { expression(conditional.Condition , scope , line) , expression(conditional.WhenTrue , scope , line) , expression(conditional.WhenFalse , scope , line) });
+            case CompoundAssignExpression compound:
+            {
+                //x += v 는 x = x + v
+                IrExpr value = new IrOperator(compound.Operator , new[] { new IrRead(name(compound.Name , scope)) , expression(compound.Value , scope , line) });
+                return new IrAssign(name(compound.Name , scope) , slot_of(scope , compound.Name) , value);
+            }
+            case SyntaxErrorExpression syntax:
+                error(line , syntax.Message);
+                return new IrConst(null);
             case RemoveExpression:
                 //CheckNativeJs에서 이미 오류
                 error(line , "제한 모드: 삭제를 쓸수 없습니다.");

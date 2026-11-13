@@ -1,0 +1,32 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  param a
+  param a
+  return (list a a.x)
+endfunc
+func g
+  param a
+  param a.x
+  return (list a a.x)
+endfunc
+func h
+  param a.b
+  return (list a.b a.b.x)
+endfunc
+console.writeline (host.show (f (pt 1 2) (pt 3 4)) (g (pt 1 2) 99) (h (pt 5 6)))
+console.writeline (host.show (f (pt 1 2)) (g (pt 1 2)))

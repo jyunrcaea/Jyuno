@@ -143,5 +143,113 @@ repeat 60000
 end
 return r
 ")),
+        //구조체 (1.5.0): Native JS 구조체 연구의 벤치마크 세트 (복사, 멤버 이름, 구조체 함수)
+        new("struct_copy_assign_100k" , L(@"
+struct person
+    param name
+    param rating
+    param level
+endstruct
+a = person ""Jyunni"" 0 1
+repeat 100000
+    b = a
+    b.rating = add b.rating 1
+    a = b
+end
+return a.rating
+")),
+        new("struct_equal_struct_100k" , L(@"
+struct point
+    param x
+    param y
+endstruct
+a = point 1 2
+b = point 1 2
+n = 0
+repeat 100000
+    if (equal a b)
+        n = add n 1
+    end
+end
+return n
+")),
+        new("struct_field_rw_300k" , L(@"
+struct point
+    param x
+    param y
+endstruct
+p = point 0 0
+i = 0
+while (less i 300000)
+    p.x = add p.x 1
+    p.y = add p.y 2
+    i = add i 1
+end
+return (add p.x p.y)
+")),
+        new("struct_method_call_300k" , L(@"
+struct counter
+    param count
+    func next
+        count = add count 1
+        return (mod count 7)
+    endfunc
+endstruct
+c = counter 0
+sum = 0
+repeat 300000
+    sum = add sum (c.next)
+end
+return sum
+")),
+        new("struct_pass_struct_100k" , L(@"
+struct point
+    param x
+    param y
+endstruct
+func manhattan
+    param p
+    return (add p.x p.y)
+endfunc
+p = point 3 4
+sum = 0
+repeat 100000
+    sum = add sum (manhattan p)
+end
+return sum
+")),
+        new("struct_struct_list_20k" , L(@"
+struct point
+    param x
+    param y
+endstruct
+points = list
+i = 0
+while (less i 20000)
+    list.push points (point i (mul i 2))
+    i = add i 1
+end
+sum = 0
+for p points
+    sum = add sum p.x p.y
+end
+return sum
+")),
+        new("struct_vec_add_100k" , L(@"
+struct vec
+    param x
+    param y
+    func plus
+        param o
+        return (vec (add x o.x) (add y o.y))
+    endfunc
+endstruct
+v = vec 0 0
+w = vec 1 2
+repeat 100000
+    v = v.plus w
+end
+return (add v.x v.y)
+")),
     };
 }

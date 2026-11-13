@@ -1,0 +1,32 @@
+p.x = 5
+func f
+    param p
+    return p.x
+endfunc
+console.writeline (f 1)
+struct pt
+    param y
+endstruct
+console.writeline (f (pt 2))
+q = pt 3
+console.writeline (f q)
+struct inner
+    param v
+endstruct
+struct outer
+    param i
+endstruct
+o = outer (inner 4)
+func gv
+    param o
+    return o.i.v
+endfunc
+console.writeline (gv o)
+func gi
+    param o
+    return o.i
+endfunc
+t = gi o
+t.v = 9
+console.writeline (string o)
+console.writeline (string t)

@@ -1,0 +1,14 @@
+struct s
+  param n
+  acc = 0
+  top:
+  acc = add acc n
+  n = sub n 1
+  if (greater n 0)
+    goto top
+  end
+endstruct
+a = s 4
+b = a
+b.acc = 0
+console.writeline (host.show a b)

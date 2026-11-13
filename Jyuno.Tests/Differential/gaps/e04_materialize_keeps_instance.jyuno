@@ -1,0 +1,40 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  param p
+  return (list (p.getx (host.eval "p.x = 5")) p.x)
+endfunc
+struct pt2
+  param x
+  func getx
+    return x
+  endfunc
+  func setx
+    param v
+    x = v
+    return x
+  endfunc
+endstruct
+console.writeline (host.show (f (pt2 1)))
+func g
+  param p
+  return (list (p.setx (host.eval "p.x")) (p.setx (add 1 (host.eval "p.x"))) p (host.eval "p"))
+endfunc
+console.writeline (host.show (g (pt2 3)))
+v = pt2 8
+console.writeline (host.show (g v) v)
+return 0

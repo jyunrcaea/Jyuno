@@ -1,0 +1,5 @@
+func n
+    param l
+    return (l 1)
+endfunc
+console.writeline (n (list 5 6 7))

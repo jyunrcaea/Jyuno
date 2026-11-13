@@ -1,0 +1,29 @@
+struct ver
+  param major
+  param minor
+  func <
+    param o
+    return major < o.major || (major == o.major && minor < o.minor)
+  endfunc
+  func >
+    param o
+    return o < (ver major minor)
+  endfunc
+  func <=
+    param o
+    return !((ver major minor) > o)
+  endfunc
+  func ==
+    param o
+    return major == o.major && minor == o.minor
+  endfunc
+endstruct
+a = ver 1 2
+b = ver 1 10
+c = ver 2 0
+console.writeline (host.show (a < b) (b < a) (a > b) (a <= a) (a >= b))
+console.writeline (host.show (less a b c) (less a c b) (greater c b a) (equal a (ver 1 2)) (equal a b))
+console.writeline (host.show (a == (ver 1 2)) (a != (ver 1 2)) (a != b))
+l = list c a b
+array.sort l
+console.writeline (host.show l)

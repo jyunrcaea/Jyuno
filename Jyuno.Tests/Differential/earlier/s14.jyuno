@@ -1,0 +1,16 @@
+struct pt
+    param x
+    param l
+endstruct
+func f
+    param p
+    return (p.l 1)
+endfunc
+console.writeline (f (pt 2 (list 4 5)))
+func g
+    param p
+    return (p.l 1 9)
+endfunc
+s = pt 2 (list 4 5)
+g s
+console.writeline (string s)

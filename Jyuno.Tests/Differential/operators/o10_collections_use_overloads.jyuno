@@ -1,0 +1,33 @@
+struct money
+  param amount
+  param unit
+  func value
+    return unit == "k" ? amount * 1000 : amount
+  endfunc
+  func ==
+    param o
+    return (value) == (o.value)
+  endfunc
+  func <
+    param o
+    return (value) < (o.value)
+  endfunc
+endstruct
+a = money 1 "k"
+b = money 1000 ""
+c = money 5 ""
+d = money 2 "k"
+l = list d a c b
+console.writeline (host.show (a == b) (equal a b) (a != c) (a > c) (c >= a) (a <= b) (less c a d) (greater d a c))
+array.sort l
+console.writeline (host.show l)
+array.sort l true
+console.writeline (host.show l (array.contains l (money 2000 "")) (array.indexof l (money 5000 "")) (array.indexof l (money 5 "")) (array.count l (money 1 "k")))
+console.writeline (host.show (array.min l) (array.max l) (array.distinct l))
+console.writeline (host.show (sub l (money 1000 "")))
+struct box
+  param inner
+endstruct
+x = box (money 1 "k")
+y = box (money 1000 "")
+console.writeline (host.show (x == y) (equal x y) (x != y))

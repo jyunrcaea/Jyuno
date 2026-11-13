@@ -1,0 +1,26 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func inner
+  param q
+  return (list q.x (host.eval "q.x = 9") q.x (host.eval "local z = q") (host.eval "z") q)
+endfunc
+func outer
+  param p
+  return (list p.x (inner p) p.x (host.eval "p.move 100") p (inner p) (inner (host.eval "p")) p)
+endfunc
+console.writeline (host.show (outer (pt 1 2)))
+return 0

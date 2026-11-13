@@ -387,7 +387,7 @@ public partial class Interpreter
             if (!first)
                 open("else");
             if (call.Name.Import < 0)
-                line($"{r} = {cfail($"'{name}'은/는 존재하지 않는 함수/변수/명령어 입니다." , typeof(object))};");
+                line($"{r} = {cfail(call.Missing , typeof(object))};");
             else if (imports_variable(call.Name.Import))
             {
                 V x = value_call_cs(let(new V($"S.GetGlobal(i{call.Name.Import})" , typeof(object))) , call);
@@ -403,7 +403,7 @@ public partial class Interpreter
         V direct_call_cs(Slot slot , IrCall call)
         {
             Function f = slot.Func!;
-            line($"if (!fd{slot.Id}) {cfail($"'{call.Name.Name}'은/는 존재하지 않는 함수/변수/명령어 입니다." , typeof(object))};");
+            line($"if (!fd{slot.Id}) {cfail(call.Missing , typeof(object))};");
             List<string> args = new();
             for (int k = 0 ; k < Math.Max(f.Arity , call.Arguments.Length) ; k++)
             {

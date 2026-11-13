@@ -1,0 +1,33 @@
+struct pt
+    param x
+endstruct
+n = host.nan
+console.writeline n
+a = pt n
+b = a
+console.writeline (equal a a)
+console.writeline (equal a b)
+console.writeline (equal a.x a.x)
+l = list (pt n)
+console.writeline (equal (l 0) (l 0))
+struct box
+    param p
+    param l
+endstruct
+c = box a (list n)
+console.writeline (equal c c)
+console.writeline (equal c.p c.p)
+func same
+    param q
+    return (equal q q)
+endfunc
+func same2
+    param q
+    return (equal q.p q.p)
+endfunc
+console.writeline (same a)
+console.writeline (same c)
+console.writeline (same2 c)
+d = pt 1
+console.writeline (equal d d)
+console.writeline (same d)

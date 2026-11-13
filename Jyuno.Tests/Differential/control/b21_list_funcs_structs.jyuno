@@ -1,0 +1,40 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+l = list (pt 1 2) (pt 3 4)
+p = pt 3 4
+console.writeline (list.contains l p)
+console.writeline (list.indexof l p)
+list.push l p
+p.move 1
+list.insert l 0 p
+p.move 1
+console.writeline (host.show l)
+q = list.pop l
+q.move 100
+r = list.removeat l 0
+r.move 100
+console.writeline (host.show l q r)
+console.writeline (list.remove l (pt 3 4))
+console.writeline (host.show l)
+f = list.new 2 p
+x = f 0
+x.x = 1000
+console.writeline (host.show f)
+list.fill f (pt 0 0)
+y = f 1
+y.x = 5
+console.writeline (host.show f)

@@ -1,0 +1,5 @@
+func g
+    param add
+    return (add 1 2)
+endfunc
+console.writeline (g 5)

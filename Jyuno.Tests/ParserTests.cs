@@ -35,10 +35,11 @@ public class ParserTests
     }
 
     [Fact]
-    public void Tokenizer_MinusWithoutDigit_IsPrefix()
+    public void Tokenizer_MinusWithoutDigit_IsOperator()
     {
         Token[] tokens = Parser.Tokenizer("- 5").ToArray();
-        Assert.Equal(TokenType.Prefix, tokens[0].type);
+        Assert.Equal(TokenType.Operator, tokens[0].type);
+        Assert.Equal("-", tokens[0].value);
         Assert.Equal(5L, tokens[1].value);
     }
 

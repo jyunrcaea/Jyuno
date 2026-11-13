@@ -1,0 +1,35 @@
+struct bag
+    l = list 0
+    func setl
+        param v
+        l = v
+    endfunc
+endstruct
+shared = list 1.5 (host.nan)
+a = bag
+b = bag
+a.setl shared
+b.setl shared
+console.writeline (equal a b)
+console.writeline (equal a a)
+console.writeline (equal a.l b.l)
+ok = list 1 2
+c = bag
+d = bag
+c.setl ok
+d.setl ok
+console.writeline (equal c d)
+elems = list a b
+console.writeline (equal (elems 0) a)
+console.writeline (equal a (elems 0))
+console.writeline (equal (elems 0) (elems 0))
+struct pt
+    param x
+endstruct
+sl = list (pt (host.nan))
+e = bag
+f = bag
+e.setl sl
+f.setl sl
+console.writeline (equal e f)
+console.writeline (equal e.l f.l)

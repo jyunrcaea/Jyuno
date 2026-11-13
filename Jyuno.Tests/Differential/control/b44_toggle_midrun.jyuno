@@ -1,0 +1,52 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+struct box
+  param a
+  param b
+  items = list 1 2
+  func grow
+    param n
+    a.x = add a.x n
+    list.push items n
+    return (length items)
+  endfunc
+  func swap
+    t = a
+    a = b
+    b = t
+  endfunc
+  func geta
+    return a
+  endfunc
+endstruct
+a = pt 1 2
+host.opt "escape" 0
+b = a
+host.opt "inline" 0
+k = box a b
+host.opt "escape" 1
+k.swap
+c = k.geta
+host.opt "inline" 1
+c.move 5
+func f
+  param p
+  return (list p (host.opt "inline" 0) p.x (host.opt "escape" 0) (equal p p) (host.opt "inline" 1) p)
+endfunc
+console.writeline (host.show (f c) a b c k)
+host.opt "escape" 1
+console.writeline (host.show (f k.a) (equal k k))

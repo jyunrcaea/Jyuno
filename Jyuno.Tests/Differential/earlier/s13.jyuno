@@ -1,0 +1,8 @@
+struct pt
+    param x
+endstruct
+func f
+    param p
+    return (p.x 1)
+endfunc
+console.writeline (f (pt 2))

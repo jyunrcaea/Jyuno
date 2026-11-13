@@ -41,6 +41,8 @@ public sealed class TypeCheckResult
         Rounds = rounds;
     }
     public bool Success => Errors.Count is 0;
+    /// <summary>제한 모드를 지키지 않아서 검사하지 못함</summary>
+    public bool Restricted { get; init; }
     public IReadOnlyList<TypeDiagnostic> Errors { get; }
     /// <summary>검사하지 못한 부분 (호출되지 않은 함수 등)</summary>
     public IReadOnlyList<TypeDiagnostic> Warnings { get; }
@@ -60,7 +62,16 @@ public static class JyunoTypeChecker
     /// </summary>
     public static TypeCheckResult Check(IReadOnlyList<string> lines , Runtime profile , TypeCheckLevel level = TypeCheckLevel.Strict , IReadOnlyDictionary<string , string>? hosts = null)
     {
-        IrProgram program = IrBuilder.Build(lines , profile);
+        IrProgram program;
+        try
+        {
+            program = IrBuilder.Build(lines , profile , operators: true);
+        }
+        catch (JyunoBuildException e)
+        {
+            //제한 모드(삭제, 내장 함수 재정의, 구조체 등)를 지키지 않으면 타입을 정할수 없음
+            return new TypeCheckResult(e.Errors.Select(o => new TypeDiagnostic(o.Line , "제한 모드" , o.Message)).ToList() , Array.Empty<TypeDiagnostic>() , Array.Empty<string>() , 0 , 0) { Restricted = true };
+        }
         return new TypeChecker(program , profile , level , hosts).Run();
     }
 
@@ -586,6 +597,9 @@ sealed class TypeChecker
             case IrParen paren:
                 resolve(paren.Inner);
                 break;
+            case IrOperator op:
+                foreach (IrExpr a in op.Operands) resolve(a);
+                break;
             case IrConstDef d:
                 stack[^1].Slots[d.Slot].IsVar = true;
                 stack[^1].Slots[d.Slot].HasConst = true;
@@ -891,8 +905,83 @@ sealed class TypeChecker
                 grow_summary(slot , AType.Int);
                 return AType.Null;
             }
+            case IrOperator op:
+                return operator_type(op , ref st , ctx , line);
             default:
                 throw new Unsupported(e.Op.ToString());
+        }
+    }
+
+    //1.6.0 연산자 (Compiler/OperatorCompiler.cs와 같은 규칙, 구조체는 제한 모드에서 거부됨)
+    AType operator_type(IrOperator op , ref State st , Ctx ctx , int line)
+    {
+        IrExpr[] o = op.Operands;
+        switch (op.Symbol)
+        {
+            case "&&" or "||":
+            {
+                expr(o[0] , ref st , ctx , line);
+                State right = st.Clone();
+                expr(o[1] , ref right , ctx , line);
+                st = State.Join(st , right)!;
+                return AType.Bool;
+            }
+            case "??":
+            {
+                AType left = expr(o[0] , ref st , ctx , line);
+                if (!left.Has(TK.Null) && !left.Has(TK.Any))
+                    return left; //null일수 없으면 오른쪽은 계산하지 않음
+                State right_state = st.Clone();
+                AType right = expr(o[1] , ref right_state , ctx , line);
+                st = State.Join(st , right_state)!;
+                return left.Without(TK.Null).Union(right);
+            }
+            case "?:":
+            {
+                expr(o[0] , ref st , ctx , line);
+                State a = st.Clone() , b = st.Clone();
+                AType t = expr(o[1] , ref a , ctx , line);
+                AType f = expr(o[2] , ref b , ctx , line);
+                st = State.Join(a , b)!;
+                return t.Union(f);
+            }
+        }
+        AType[] args = new AType[o.Length];
+        for (int i = 0 ; i < o.Length ; i++) args[i] = expr(o[i] , ref st , ctx , line);
+        if (args.Any(x => x.IsBottom)) return AType.Bottom;
+        switch (op.Symbol)
+        {
+            case "+": return builtin("add" , args , line);
+            case "-": return builtin("sub" , args , line);
+            case "*": return builtin("mul" , args , line);
+            case "/": return builtin("div" , args , line);
+            case "%": return builtin("mod" , args , line);
+            case "&": return builtin("and" , args , line);
+            case "|": return builtin("or" , args , line);
+            case "==" or "!=" or "<" or ">" or "<=" or ">=" or "u!":
+                return AType.Bool; //크기를 비교할수 없으면 false (오류 없음)
+            case "^":
+                return args[0].SubsetOf(AType.Int) && args[1].SubsetOf(AType.Int) ? AType.Int
+                    : !args[0].Has(TK.Int) || !args[1].Has(TK.Int) ? AType.Bool : AType.Int.Union(AType.Bool);
+            case "<<" or ">>":
+                if (!args[0].SubsetOf(AType.Int) || !args[1].SubsetOf(AType.Int))
+                    report(line , op.Symbol , args , $"'{op.Symbol}' 연산은 정수끼리만 할수 있습니다. ({args[0]}, {args[1]})");
+                return AType.Int;
+            case "u~":
+                if (!args[0].SubsetOf(AType.Int))
+                    report(line , "~" , args , $"'~' 연산은 정수에만 할수 있습니다. ({args[0]})");
+                return AType.Int;
+            case "u-" or "u+":
+            {
+                if (!args[0].SubsetOf(Number))
+                    report(line , op.Symbol[1..] , args , $"'{op.Symbol[1..]}' 연산은 숫자에만 할수 있습니다. ({args[0]})");
+                AType r = AType.Bottom;
+                if (args[0].Has(TK.Int)) r = r.Union(AType.Int);
+                if (args[0].Has(TK.Real)) r = r.Union(AType.Real);
+                return r.IsBottom ? AType.Int : r;
+            }
+            default:
+                throw new Unsupported("연산자 " + op.Symbol);
         }
     }
 
@@ -1039,7 +1128,7 @@ sealed class TypeChecker
                 return result.Union(builtin(im.Name , arguments(ref st) , line));
             return result.Union(value_call(global_value(call.Name.Import , line) , call , arguments(ref st) , line));
         }
-        error(line , "정의" , maybe ? $"'{call.Name.Name}'이/가 정의되지 않았을수 있습니다." : $"'{call.Name.Name}'은/는 존재하지 않는 함수/변수/명령어 입니다.");
+        error(line , "정의" , maybe ? $"'{call.Name.Name}'이/가 정의되지 않았을수 있습니다." : call.Missing);
         arguments(ref st);
         return result;
     }
@@ -1304,8 +1393,9 @@ sealed class TypeChecker
         ["sub"] = (self , a) => {
             if (a.Length < 2) return fail("인자: 뺄셈 할 값 2개가 필요합니다.");
             if (is_coll(a[0])) return ok(like(a[0] , elem_of(a[0])));
+            if (a[0].Has(TK.Null) || a[1].Has(TK.Null)) return fail(NullError);
             if (a[0].Has(TK.Str))
-                return a[1].Has(TK.Null) ? fail(NullError) : a[1].Has(TK.Str) ? ok(AType.Str) : fail($"문자열에서는 문자열만 뺄수 있습니다. ({a[1]})");
+                return a[1].Has(TK.Str) ? ok(AType.Str) : fail($"문자열에서는 문자열만 뺄수 있습니다. ({a[1]})");
             if (num(a[0]) && num(a[1])) return ok(arith(a[0] , a[1]));
             return fail("숫자 또는 문자열 이외에는 뺄셈 연산을 할수 없습니다.");
         },

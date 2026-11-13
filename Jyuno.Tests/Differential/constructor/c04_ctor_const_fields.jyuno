@@ -1,0 +1,12 @@
+struct s
+  5 = five
+  param x
+  "name" = label
+  func get
+    return (add five x)
+  endfunc
+endstruct
+a = s 1
+b = a
+console.writeline (host.show a b (a.get) (b.get) (equal a b))
+b.five = 6

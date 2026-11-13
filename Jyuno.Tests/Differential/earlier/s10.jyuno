@@ -1,0 +1,4 @@
+func q
+    return
+endfunc
+console.writeline (q)

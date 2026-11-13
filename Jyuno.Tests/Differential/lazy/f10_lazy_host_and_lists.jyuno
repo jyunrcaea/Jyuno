@@ -1,0 +1,28 @@
+#!dump
+struct bag
+  param a
+  param b
+endstruct
+shared = list 1
+host.keep (bag shared 1)
+list.push shared 2
+k = host.get
+list.push shared 3
+points = list
+i = 0
+while (less i 6)
+  list.push points (bag i shared)
+  list.push points (bag i i)
+  list.push shared (add 10 i)
+  i = add i 1
+end
+p3 = points 3
+p4 = points 4
+list.push p4.b 999
+host.var = bag shared 5
+list.push shared 77
+hv = host.var
+console.writeline (host.show k points p3 p4 hv shared)
+host.poke (bag shared 3) "a"
+console.writeline (host.show shared)
+return

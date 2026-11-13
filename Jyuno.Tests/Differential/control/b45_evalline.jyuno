@@ -1,0 +1,21 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+a = pt 1 2
+b = a
+console.writeline (host.show (host.evalline 16) (host.evalline 17))
+b.move 1
+console.writeline (host.show a b (host.evalline 17) (host.evalline 16))

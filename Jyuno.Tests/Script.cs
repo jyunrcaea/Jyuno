@@ -43,8 +43,11 @@ internal static class Script
         string script = engine + "\n" + string.Join("\n", lines);
         Assert.True(source.Error?.GetType() == compiled.Error?.GetType(), $"예외 종류가 다름: {source.Error?.GetType().Name} / {compiled.Error?.GetType().Name} ({compiled.Error?.Message})\n{script}");
         Assert.True(source.Error?.Message == compiled.Error?.Message, $"예외 메시지가 다름: {source.Error?.Message} / {compiled.Error?.Message}\n{script}");
-        Assert.True(Equals(source.Result, compiled.Result) || (source.Result is System.Collections.IEnumerable a && compiled.Result is System.Collections.IEnumerable b && a.Cast<object?>().SequenceEqual(b.Cast<object?>())), $"결과가 다름: {source.Result} / {compiled.Result}\n{script}");
+        Assert.True(lines.Any(o => o.Contains("math.random") || o.Contains("math.csprng")) || Equals(source.Result, compiled.Result) || (source.Result is System.Collections.IEnumerable a && compiled.Result is System.Collections.IEnumerable b && a.Cast<object?>().SequenceEqual(b.Cast<object?>())), $"결과가 다름: {source.Result} / {compiled.Result}\n{script}");
         Assert.True(source.Output.Count == compiled.Output.Count, $"출력 개수가 다름\n{script}");
+        //난수를 쓰는 스크립트는 값이 실행마다 다르므로 개수만 비교 (값은 각 테스트가 검사)
+        if (lines.Any(o => o.Contains("math.random") || o.Contains("math.csprng")))
+            return;
         for (int i = 0; i < source.Output.Count; i++)
             Assert.True(Equals(source.Output[i], compiled.Output[i]) || (source.Output[i] is System.Collections.IEnumerable x && compiled.Output[i] is System.Collections.IEnumerable y && x.Cast<object?>().SequenceEqual(y.Cast<object?>())), $"{i}번째 출력이 다름: {source.Output[i]} / {compiled.Output[i]}\n{script}");
     }

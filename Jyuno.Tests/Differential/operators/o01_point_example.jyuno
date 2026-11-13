@@ -1,0 +1,14 @@
+struct point
+  param x
+  param y
+  func +
+    param other
+    return point (x + other.x) (y + other.y)
+  endfunc
+endstruct
+p1 = point 10 20
+p2 = point -5 4
+if p1 + p2 == (add p1 p2)
+  console.writeline "success"
+end
+console.writeline (host.show (p1 + p2) p1 p2 (add p1 p2 p2))

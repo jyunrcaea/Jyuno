@@ -1,0 +1,33 @@
+struct pt
+  param x
+  param y
+  func move
+    param d
+    x = add x d
+    return x
+  endfunc
+  func sum
+    return (add x y)
+  endfunc
+  func plus
+    param o
+    return (pt (add x o.x) (add y o.y))
+  endfunc
+endstruct
+func f
+  for i (list 1 2 3)
+    param p
+    p.move i
+    console.writeline (host.show p)
+  end
+  repeat 2
+    param q
+    q.move 5
+    console.writeline (host.show q)
+  end
+  return 0
+endfunc
+f (pt 0 0) (pt 1 1)
+a = pt 3 3
+f a a
+console.writeline (host.show a)

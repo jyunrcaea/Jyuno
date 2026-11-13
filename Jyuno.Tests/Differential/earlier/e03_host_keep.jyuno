@@ -1,0 +1,15 @@
+struct pt
+    param x
+endstruct
+a = pt 1
+host.keep a
+b = host.get
+b.x = 50
+console.writeline (string (host.get))
+c = host.keep (pt 7)
+c.x = 8
+console.writeline (string (host.get))
+d = host.get
+d.x = 9
+console.writeline (string (host.get))
+console.writeline (string c)

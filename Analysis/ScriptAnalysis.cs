@@ -14,7 +14,7 @@ public sealed class ScriptAnalysis
     public int LineCount => Tokens.Count;
     /// <summary>블록 구조 오류 (if/end 짝 등). 있다면 Root는 null</summary>
     public IReadOnlyList<GrammarError> StructureErrors { get; }
-    /// <summary>각 줄이 속한 가장 안쪽 func 줄 (함수 밖이라면 -1)</summary>
+    /// <summary>각 줄이 속한 가장 안쪽 func/struct 줄 (함수 밖이라면 -1)</summary>
     public IReadOnlyList<int> Owners { get; }
     /// <summary>스크립트 최상위 블록 (블록 구조 오류가 있다면 null)</summary>
     public Block? Root { get; }
@@ -22,7 +22,7 @@ public sealed class ScriptAnalysis
     public Scope TopScope { get; }
     /// <summary>모든 영역 (Id 순서)</summary>
     public IReadOnlyList<Scope> Scopes => scopes;
-    /// <summary>모든 함수 (정의된 줄 순서)</summary>
+    /// <summary>모든 함수와 구조체 (정의된 줄 순서, 구조체는 IsStruct가 true)</summary>
     public IReadOnlyList<FunctionStatement> Functions => functions;
     /// <summary>최상위(함수 밖)의 goto</summary>
     public IReadOnlyList<GotoStatement> TopGotos => top_gotos;
@@ -80,28 +80,125 @@ public sealed class ScriptAnalysis
         if (start >= tokens.Length)
             return new ConstantExpression(null);
         Token token = tokens[start];
+        if (token.type is TokenType.Constant && is_prefix(tokens , start + 1 , '=') && tokens.Length > start + 2 && tokens[start + 2].type is TokenType.Name)
+            return new ConstantDefinitionExpression((string)tokens[start + 2].value , token.value);
+        if (token.type is TokenType.Name)
+        {
+            string name = (string)token.value;
+            if (is_prefix(tokens , start + 1 , '='))
+            {
+                if (start + 2 >= tokens.Length || is_prefix(tokens , start + 2 , ')'))
+                {
+                    end = start + 2;
+                    return new RemoveExpression(name);
+                }
+                Expression value = ParseExpression(tokens , start + 2 , closed , out end);
+                return new AssignExpression(name , value);
+            }
+            if (start + 1 < tokens.Length && tokens[start + 1].type is TokenType.Operator && Grammar.CompoundAssignment((string)tokens[start + 1].value) is string symbol)
+            {
+                if (operand_missing(tokens , start + 2))
+                    return new SyntaxErrorExpression($"연산자 '{symbol}=' 다음에 값이 없습니다.");
+                Expression value = ParseExpression(tokens , start + 2 , closed , out end);
+                if (value is SyntaxErrorExpression)
+                    return value;
+                return new CompoundAssignExpression(name , symbol , operand(value));
+            }
+            if (is_prefix(tokens , start + 1 , ':'))
+                return new LabelExpression(name);
+        }
+        return parse_operators(tokens , start , closed , false , out end);
+    }
+
+    //─── 연산자 식 (Compiler/OperatorCompiler.cs와 같은 구조, 1.6.0부터) ───
+
+    static bool is_operator(Token[] tokens , int index , string symbol) => index < tokens.Length && tokens[index].type is TokenType.Operator && (string)tokens[index].value == symbol;
+    static bool operand_missing(Token[] tokens , int index) => index >= tokens.Length || is_prefix(tokens , index , ')') || is_prefix(tokens , index , ':');
+    //연산자의 피연산자가 괄호 안에서 ')' 전에 끝나면 연산자를 계산하기 전에 괄호 오류
+    static Expression operand(Expression e) => e.MayEndEarly ? new ParenthesisExpression(e) : e;
+
+    //argument: 키워드(if, return 등)의 인자 자리인지 (괄호 없이 쓴 이름이 없을 때의 오류 메시지가 다름)
+    static Expression parse_operators(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
+        Expression condition = parse_binary(tokens , start , closed , argument , 2 , out end);
+        if (condition is SyntaxErrorExpression || !is_operator(tokens , end , "?"))
+            return condition;
+        int question = end;
+        end = tokens.Length;
+        if (operand_missing(tokens , question + 1))
+            return new SyntaxErrorExpression("조건 연산자 '?' 다음에 값이 없습니다.");
+        Expression then = parse_operators(tokens , question + 1 , closed , argument , out int middle);
+        if (then is SyntaxErrorExpression)
+            return then;
+        if (!is_prefix(tokens , middle , ':'))
+            return new SyntaxErrorExpression("조건 연산자 '?' 다음에는 ':'가 와야 합니다. (조건 ? 참일때 : 거짓일때)");
+        if (operand_missing(tokens , middle + 1))
+            return new SyntaxErrorExpression("조건 연산자 ':' 다음에 값이 없습니다.");
+        Expression otherwise = parse_operators(tokens , middle + 1 , closed , argument , out end);
+        if (otherwise is SyntaxErrorExpression)
+        {
+            end = tokens.Length;
+            return otherwise;
+        }
+        return new ConditionalExpression(operand(condition) , operand(then) , operand(otherwise));
+    }
+
+    static Expression parse_binary(Token[] tokens , int start , bool closed , bool argument , int min , out int end)
+    {
+        Expression left = parse_unary(tokens , start , closed , argument , out end);
+        while (left is not SyntaxErrorExpression && end < tokens.Length && tokens[end].type is TokenType.Operator)
+        {
+            string symbol = (string)tokens[end].value;
+            int precedence = Grammar.BinaryPrecedence(symbol);
+            if (precedence < min)
+                break;
+            if (operand_missing(tokens , end + 1))
+            {
+                end = tokens.Length;
+                return new SyntaxErrorExpression($"연산자 '{symbol}' 다음에 값이 없습니다.");
+            }
+            Expression right = parse_binary(tokens , end + 1 , closed , argument , symbol is "??" ? precedence : precedence + 1 , out end);
+            if (right is SyntaxErrorExpression)
+            {
+                end = tokens.Length;
+                return right;
+            }
+            left = new BinaryExpression(symbol , operand(left) , operand(right));
+        }
+        return left;
+    }
+
+    static Expression parse_unary(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
+        if (start < tokens.Length && tokens[start].type is TokenType.Operator)
+        {
+            string symbol = (string)tokens[start].value;
+            end = tokens.Length;
+            if (!Grammar.IsUnary(symbol))
+                return new SyntaxErrorExpression($"연산자 '{symbol}' 앞에 값이 없습니다.");
+            if (operand_missing(tokens , start + 1))
+                return new SyntaxErrorExpression($"연산자 '{symbol}' 다음에 값이 없습니다.");
+            Expression inner = parse_unary(tokens , start + 1 , closed , argument , out end);
+            if (inner is SyntaxErrorExpression)
+                return inner;
+            return new UnaryExpression(symbol , operand(inner));
+        }
+        return parse_primary(tokens , start , closed , argument , out end);
+    }
+
+    static Expression parse_primary(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
+        end = tokens.Length;
+        if (start >= tokens.Length)
+            return new ConstantExpression(null);
+        Token token = tokens[start];
         switch (token.type)
         {
             case TokenType.Constant:
-                if (is_prefix(tokens , start + 1 , '=') && tokens.Length > start + 2 && tokens[start + 2].type is TokenType.Name)
-                    return new ConstantDefinitionExpression((string)tokens[start + 2].value , token.value);
                 end = start + 1;
                 return new ConstantExpression(token.value);
             case TokenType.Name:
-                string name = (string)token.value;
-                if (is_prefix(tokens , start + 1 , '='))
-                {
-                    if (start + 2 >= tokens.Length || is_prefix(tokens , start + 2 , ')'))
-                    {
-                        end = start + 2;
-                        return new RemoveExpression(name);
-                    }
-                    Expression value = ParseExpression(tokens , start + 2 , closed , out end);
-                    return new AssignExpression(name , value);
-                }
-                if (is_prefix(tokens , start + 1 , ':'))
-                    return new LabelExpression(name);
-                return parse_call(tokens , start , closed , out end);
+                return parse_call(tokens , start , closed , argument , out end);
             case TokenType.Prefix:
                 if (token.value is '(')
                 {
@@ -122,15 +219,15 @@ public sealed class ScriptAnalysis
         }
     }
 
-    static Expression parse_call(Token[] tokens , int start , bool closed , out int end)
+    static Expression parse_call(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         string name = (string)tokens[start].value;
-        bool has_arguments = start + 1 < tokens.Length && !is_prefix(tokens , start + 1 , ')');
+        bool has_arguments = start + 1 < tokens.Length && !is_prefix(tokens , start + 1 , ')') && !is_prefix(tokens , start + 1 , ':') && tokens[start + 1].type is not TokenType.Operator;
         var arguments = ParseArguments(tokens , start + 1 , out end);
-        return new CallExpression(name , arguments , has_arguments , closed);
+        return new CallExpression(name , arguments , has_arguments , closed , argument);
     }
 
-    /// <summary>start 위치부터 ')' 또는 줄 끝까지 인자를 해석합니다.</summary>
+    /// <summary>start 위치부터 ')', ':', 연산자 또는 줄 끝까지 함수 호출의 인자를 해석합니다.</summary>
     public static IReadOnlyList<Expression> ParseArguments(Token[] tokens , int start , out int end)
     {
         List<Expression> arguments = new();
@@ -158,15 +255,39 @@ public sealed class ScriptAnalysis
                         arguments.Add(close(inner));
                         i = inner_end;
                     }
-                    else if (token.value is ')')
+                    else if (token.value is ')' or ':')
                     {
                         end = i;
                         return arguments;
                     }
                     break;
+                case TokenType.Operator:
+                    end = i;
+                    return arguments;
             }
         }
         end = tokens.Length;
+        return arguments;
+    }
+
+    /// <summary>키워드(if, while, return 등) 다음의 인자들을 해석합니다. (보통은 식 하나, 1.6.0부터)</summary>
+    public static IReadOnlyList<Expression> ParseKeywordArguments(Token[] tokens , int start)
+    {
+        List<Expression> arguments = new();
+        for (int i = start ; i < tokens.Length ;)
+        {
+            Token token = tokens[i];
+            if (token.type is TokenType.Prefix && token.value is ')')
+                break;
+            if ((token.type is TokenType.Prefix && token.value is not '(') || token.type is TokenType.Keyword || token.type is TokenType.Error
+                || (token.type is TokenType.Operator && !Grammar.IsUnary((string)token.value)))
+            {
+                i++;
+                continue;
+            }
+            arguments.Add(parse_operators(tokens , i , false , true , out int end));
+            i = Math.Max(end , i + 1);
+        }
         return arguments;
     }
 
@@ -175,7 +296,7 @@ public sealed class ScriptAnalysis
     KeywordType? keyword_at(int line) => Tokens[line].Length > 0 && Tokens[line][0].type is TokenType.Keyword ? (KeywordType)Tokens[line][0].value : null;
     string? token_error(int line) => Tokens[line].Length > 0 && Tokens[line][^1].type is TokenType.Error ? (string)Tokens[line][^1].value : null;
     string? name_at(int line , int index) => Tokens[line].Length > index && Tokens[line][index].type is TokenType.Name ? (string)Tokens[line][index].value : null;
-    IReadOnlyList<Expression> arguments_at(int line , int start) => token_error(line) is null ? ParseArguments(Tokens[line] , start , out _) : Array.Empty<Expression>();
+    IReadOnlyList<Expression> arguments_at(int line , int start) => token_error(line) is null ? ParseKeywordArguments(Tokens[line] , start) : Array.Empty<Expression>();
 
     readonly Dictionary<int , Statement> statement_at = new();
 
@@ -257,9 +378,12 @@ public sealed class ScriptAnalysis
                     break;
                 }
                 case KeywordType.Func:
+                case KeywordType.Struct:
                 {
-                    FunctionStatement statement = new(line) { TokenError = error };
+                    FunctionStatement statement = new(line , keyword is KeywordType.Struct ? StatementKind.Struct : StatementKind.Func) { TokenError = error };
                     statement.Name = tokens.Length == 2 ? name_at(line , 1) : null;
+                    if (keyword is KeywordType.Func && tokens.Length == 2 && tokens[1].type is TokenType.Operator)
+                        statement.Operator = (string)tokens[1].value;
                     statement.EndLine = map.Pair[line];
                     add(block , statement);
                     functions.Add(statement);
@@ -344,6 +468,22 @@ public sealed class ScriptAnalysis
             case UnclosedParenthesisExpression unclosed:
                 walk_expression(unclosed.Inner , scope);
                 break;
+            case BinaryExpression binary:
+                walk_expression(binary.Left , scope);
+                walk_expression(binary.Right , scope);
+                break;
+            case UnaryExpression unary:
+                walk_expression(unary.Operand , scope);
+                break;
+            case ConditionalExpression conditional:
+                walk_expression(conditional.Condition , scope);
+                walk_expression(conditional.WhenTrue , scope);
+                walk_expression(conditional.WhenFalse , scope);
+                break;
+            case CompoundAssignExpression compound:
+                //이미 있는 변수에만 대입할수 있으므로 이름을 만들지 않음
+                walk_expression(compound.Value , scope);
+                break;
         }
     }
 
@@ -375,8 +515,8 @@ public sealed class ScriptAnalysis
                     break;
                 case FunctionStatement function:
                     if (function.Name is not null && function.TokenError is null)
-                        scope.Add(function.Name , NameKinds.Function);
-                    function.InnerScope = new_scope(ScopeKind.Function , scope , function);
+                        scope.Add(function.Name , function.IsStruct ? NameKinds.Struct : NameKinds.Function);
+                    function.InnerScope = new_scope(function.IsStruct ? ScopeKind.Struct : ScopeKind.Function , scope , function);
                     walk(function.Body , function.InnerScope);
                     break;
                 case ParameterStatement parameter:
@@ -414,6 +554,10 @@ public sealed class ScriptAnalysis
                 case CallExpression call: foreach (var a in call.Arguments) expression(a); break;
                 case ParenthesisExpression paren: expression(paren.Inner); break;
                 case UnclosedParenthesisExpression unclosed: expression(unclosed.Inner); break;
+                case BinaryExpression binary: expression(binary.Left); expression(binary.Right); break;
+                case UnaryExpression unary: expression(unary.Operand); break;
+                case ConditionalExpression conditional: expression(conditional.Condition); expression(conditional.WhenTrue); expression(conditional.WhenFalse); break;
+                case CompoundAssignExpression compound: names.Add(compound.Name); expression(compound.Value); break;
             }
         }
         foreach (Statement statement in statements)
@@ -526,6 +670,7 @@ public sealed class ScriptAnalysis
                 ConstantExpression { Value: long line } => new[] { line },
                 ConstantExpression => Array.Empty<long>(),
                 VariableExpression v when labels.ContainsKey(v.Name) => labels[v.Name].Select(o => (long)o),
+                CallExpression { HasArguments: false } c when labels.ContainsKey(c.Name) => labels[c.Name].Select(o => (long)o),
                 //계산한 대상: 이 함수의 레이블 줄 중 하나
                 _ => labels.Values.SelectMany(o => o).Select(o => (long)o)
             };
@@ -539,7 +684,7 @@ public sealed class ScriptAnalysis
             }
             statement.Targets = targets;
             //레이블 이름 또는 정수 상수로 이동하는데, 이동할수 있는 줄이 모두 블록 안쪽이라면 Native JS에서 쓸수 없음
-            if (targets.Count is 0 && any_into_block && statement.Arguments[0] is ConstantExpression or VariableExpression)
+            if (targets.Count is 0 && any_into_block && statement.Arguments[0] is ConstantExpression or VariableExpression or CallExpression { HasArguments: false })
                 into_block_gotos.Add(statement);
         }
     }
@@ -552,6 +697,7 @@ public sealed class ScriptAnalysis
     /// 1. 변수/함수 삭제(이름 =)를 쓸수 없음
     /// 2. 내장 함수와 전역 함수/상수(add, mul, console.writeline, null 등)를 다시 정의하거나 대입할수 없음
     /// 3. goto로 블록(if/while/repeat/for) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
+    /// 4. 구조체(struct) 생성자 안에서 구조체를 정의할수 없음
     /// </summary>
     /// <param name="globals">전역 이름 (Runtime.GetGlobals())</param>
     public IReadOnlyList<GrammarError> CheckNativeJs(IReadOnlyDictionary<string , GlobalName> globals)
@@ -581,6 +727,13 @@ public sealed class ScriptAnalysis
                 case CallExpression call: foreach (var a in call.Arguments) expression(line , a); break;
                 case ParenthesisExpression paren: expression(line , paren.Inner); break;
                 case UnclosedParenthesisExpression unclosed: expression(line , unclosed.Inner); break;
+                case BinaryExpression binary: expression(line , binary.Left); expression(line , binary.Right); break;
+                case UnaryExpression unary: expression(line , unary.Operand); break;
+                case ConditionalExpression conditional: expression(line , conditional.Condition); expression(line , conditional.WhenTrue); expression(line , conditional.WhenFalse); break;
+                case CompoundAssignExpression compound:
+                    define(line , compound.Name , "대입");
+                    expression(line , compound.Value);
+                    break;
             }
         }
         void block(Block b)
@@ -601,6 +754,10 @@ public sealed class ScriptAnalysis
                     case ForStatement each:
                         define(each.Line , each.VariableName , "for 변수로 정의");
                         block(each.Body);
+                        break;
+                    case FunctionStatement { IsStruct: true } structure when structure.InnerScope.Parent?.Kind is ScopeKind.Struct:
+                        //구조체 생성자 안에서 정의한 구조체는 구조체 값을 복사할때마다 새 구조체 값에 다시 묶어야 해서 지원하지 않음
+                        errors.Add(new GrammarError(structure.Line , "Native JS 제약: 구조체(struct) 안에서 구조체를 정의할수 없습니다."));
                         break;
                     case FunctionStatement function:
                         define(function.Line , function.Name , "함수로 정의");
