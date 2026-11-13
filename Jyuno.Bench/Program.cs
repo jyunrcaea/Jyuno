@@ -39,6 +39,9 @@ static class Program
         Runtime runtime = new(Runtime.AddJyunoCommandType.Math);
         JyunoHost.AddConsole(runtime , sink , new StringReader(input) , () => { });
         JyunoHost.AddHostFunctions(runtime);
+        //테스트 스크립트(Jyuno.Tests)의 출력 함수
+        if (Environment.GetEnvironmentVariable("TYPECHECK_OUT") is "1")
+            runtime.AddFunction("out" , args => null);
         return runtime;
     }
 
@@ -50,6 +53,8 @@ static class Program
         System.Collections.IList list => "[" + string.Join(",", list.Cast<object?>().Select(Show)) + "]",
         _ => value.GetType().Name + ":" + Convert.ToString(value , System.Globalization.CultureInfo.InvariantCulture)
     };
+
+    static readonly IReadOnlyDictionary<string , string> Hosts = new Dictionary<string , string>(JyunoTypeChecker.JyunoWebHost) { ["out"] = "(any...) -> null" };
 
     static Outcome Execute(Func<object?> run , Sink sink)
     {
@@ -95,8 +100,10 @@ static class Program
     {
         if (error is null) return null;
         string[] null_like = { "null" , "NullReference" };
-        string[] type_like = { "RuntimeBinder" , "InvalidCast" , "정의되지 않" , "알수없는 변수" , "존재하지 않는" , "뺄셈" , "크기를 비교" , "반복할 횟수" , "인덱스는 정수" , "순회할수 없습니다" , "넣을수 없습니다" , "숫자가 아닙니다" , "길이를 구할수 없습니다" , "함수 또는 변수가 아닙니다" , "괄호" , "인자" , "누락" , "더할수" , "곱할" , "나눌수" , "형식 문자열은" , "변환" };
+        string[] type_like = { "연산은" , "RuntimeBinder" , "InvalidCast" , "정의되지 않" , "알수없는 변수" , "존재하지 않는" , "뺄셈" , "크기를 비교" , "반복할 횟수" , "인덱스는 정수" , "순회할수 없습니다" , "넣을수 없습니다" , "숫자가 아닙니다" , "길이를 구할수 없습니다" , "함수 또는 변수가 아닙니다" , "괄호" , "인자" , "누락" , "더할수" , "곱할" , "나눌수" , "형식 문자열은" , "변환" };
         string[] value_like = { "0으로 나눌수" , "범위" , "호출 깊이" , "너무 많습니다" , "형식" , "goto" };
+        string[] type_first = { "상수를 변경" , "실행 위치는" , "이동할 값을" , "형식으로만" , "빈 문자열" };
+        if (type_first.Any(error.Contains)) return "타입";
         if (value_like.Any(error.Contains)) return "값";
         if (null_like.Any(error.Contains)) return "null";
         if (type_like.Any(error.Contains)) return "타입";
@@ -428,7 +435,7 @@ static class Program
                     {
                         TypeCheckResult result;
                         long t = Stopwatch.GetTimestamp();
-                        result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , JyunoTypeChecker.JyunoWebHost);
+                        result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , Hosts);
                         if (result.Restricted)
                         {
                             restricted++;
@@ -467,6 +474,8 @@ static class Program
                             string k = worst?.Split(':')[0] ?? "오류 없음";
                             rejected_runtime[k] = rejected_runtime.GetValueOrDefault(k) + 1;
                             if (worst is null) false_alarm[$"[{first.Category}] {m}"] = false_alarm.GetValueOrDefault($"[{first.Category}] {m}") + 1;
+                            if (worst is null && Environment.GetEnvironmentVariable("TYPECHECK_VERBOSE") is "2" && level is TypeCheckLevel.Strict)
+                                Console.WriteLine($"── 거부했지만 실행하면 문제 없음 {name}: {first}\n{string.Join("\n" , lines.Select((l , i) => $"{i + 1,3}| {l}"))}\n  => {Interpret(lines , inputs[0]).Error}");
                             if (verbose) Console.WriteLine($"  {name} [{level}] {string.Join(" / " , result.Errors.Take(3))}");
                         }
                     }

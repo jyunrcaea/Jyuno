@@ -484,6 +484,9 @@ internal sealed class IrBuilder
             {
                 //x += v 는 x = x + v
                 IrExpr value = new IrOperator(compound.Operator , new[] { new IrRead(name(compound.Name , scope)) , expression(compound.Value , scope , line) });
+                //영역에 없는 이름이라면 읽을 때 오류 (대입할 칸을 만들지 않음)
+                if (!scope.Names.ContainsKey(compound.Name))
+                    return value;
                 return new IrAssign(name(compound.Name , scope) , slot_of(scope , compound.Name) , value);
             }
             case SyntaxErrorExpression syntax:

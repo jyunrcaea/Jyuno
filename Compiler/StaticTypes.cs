@@ -612,8 +612,13 @@ sealed class TypeChecker
 
     //─────────── 2. 흐름을 따라 타입 계산 ───────────
 
+    //지금 검사하는 함수 인스턴스 (오류 메시지에 어떤 호출 때문인지 붙임, Crystal의 instantiation 표시)
+    string? current_instance;
+
     void error(int line , string category , string message)
     {
+        if (current_instance is not null)
+            message += $" ({current_instance}로 호출할 때)";
         var key = (line , category , message);
         if (!errors.ContainsKey(key))
             errors[key] = new TypeDiagnostic(line , category , message);
@@ -958,8 +963,15 @@ sealed class TypeChecker
             case "%": return builtin("mod" , args , line);
             case "&": return builtin("and" , args , line);
             case "|": return builtin("or" , args , line);
-            case "==" or "!=" or "<" or ">" or "<=" or ">=" or "u!":
-                return AType.Bool; //크기를 비교할수 없으면 false (오류 없음)
+            case "==" or "!=" or "u!":
+                return AType.Bool;
+            case "<" or ">" or "<=" or ">=":
+                //less/greater와 같이 크기를 비교할수 없는 값이면 오류 (Values.Compare)
+                foreach (AType x in args[0].Singles())
+                    foreach (AType y in args[1].Singles())
+                        if (ordered(new[] { x , y }) is (null , string message))
+                            report(line , op.Symbol , new[] { x , y } , message);
+                return AType.Bool;
             case "^":
                 return args[0].SubsetOf(AType.Int) && args[1].SubsetOf(AType.Int) ? AType.Int
                     : !args[0].Has(TK.Int) || !args[1].Has(TK.Int) ? AType.Bool : AType.Int.Union(AType.Bool);
@@ -1161,10 +1173,8 @@ sealed class TypeChecker
                 continue;
             }
             AType v = args[1];
-            if (!v.SubsetOf(elem))
-                report(line , call.Name.Name , new[] { v } , $"{one}에는 {elem}만 넣을수 있습니다. ({v})");
-            else if (!fits(v , clr))
-                report(line , call.Name.Name , new[] { v } , $"{one}은/는 실행할 때 원소 타입이 정해진 컬렉션일수 있어서 {v}을/를 넣을수 없을수 있습니다.");
+            if (fits_into(one , v) is string message)
+                report(line , call.Name.Name , new[] { v } , message);
             result = result.Union(AType.Null);
         }
         return result;
@@ -1218,7 +1228,10 @@ sealed class TypeChecker
         chain.Reverse();
         stack.AddRange(chain);
         stack.Add(f.Frame);
+        string? outer_instance = current_instance;
+        current_instance = shown;
         State? end = block(f.Def.Body! , body_in , ctx);
+        current_instance = outer_instance;
         stack.Clear();
         stack.AddRange(saved);
         if (end is not null) ctx.Ret = ctx.Ret.Union(AType.Null);
@@ -1460,7 +1473,90 @@ sealed class TypeChecker
         ["directory.list"] = (self , a) => a.Length > 0 && a[0].Has(TK.Null) ? fail(NullError) : ok(AType.Arr(AType.Str , TK.Str).Union(AType.Bool)),
         ["directory.move"] = (self , a) => a.Length >= 2 && a[0].Has(TK.Str) && a[1].Has(TK.Str) ? ok(AType.Bool) : fail("기존 경로, 그리고 이동할 새 경로를 입력하지 않았습니다."),
         ["file.remove"] = (self , a) => str_arg(a , AType.Bool),
+        //난수: 정수 인자라면 정수, 그 외에는 실수
+        ["math.random"] = (self , a) => random(a),
+        ["math.csprng"] = (self , a) => random(a),
     };
+
+    static (AType?, string?) random(AType[] a)
+    {
+        if (a.Length is 0) return ok(AType.Real);
+        int n = Math.Min(a.Length , 2);
+        for (int i = 0 ; i < n ; i++)
+        {
+            if (a[i].Has(TK.Null)) return fail(NullError);
+            if (!num(a[i])) return fail($"{a[i]}은/는 숫자가 아닙니다.");
+        }
+        return ok(a.Take(n).All(is_int) ? AType.Int : AType.Real);
+    }
+
+    //컬렉션 함수 (array.*, list.*, Language/Collections.cs)와 문자열 함수 (string.*, Language/Strings.cs)
+    static TypeChecker()
+    {
+        foreach (string kind in new[] { "array" , "list" })
+        {
+            bool is_list = kind is "list";
+            void coll(string name , Func<AType , AType[] , (AType?, string?)> rule , bool only_list = false) =>
+                builtins[$"{kind}.{name}"] = (self , a) => {
+                    if (a.Length is 0) return fail("인자: 배열/리스트가 필요합니다.");
+                    if (a[0].Has(TK.Null)) return fail(NullError);
+                    if (!is_coll(a[0]) || (only_list && !a[0].Has(TK.List))) return fail($"{a[0]}은/는 {(only_list ? "리스트" : "배열/리스트")}가 아닙니다.");
+                    return rule(a[0] , a);
+                };
+            //원래 컬렉션 그대로 (또는 같은 원소 타입의 새 컬렉션)
+            foreach (string name in new[] { "sort" , "reverse" , "shuffle" , "copy" , "slice" , "distinct" })
+                coll(name , (c , a) => ok(c));
+            coll("fill" , (c , a) => a.Length < 2 ? ok(c) : fits_into(c , a[1]) is string e ? fail(e) : ok(c));
+            coll("contains" , (c , a) => ok(AType.Bool));
+            foreach (string name in new[] { "indexof" , "lastindexof" , "count" , "binary_search" })
+                coll(name , (c , a) => ok(AType.Int));
+            coll("join" , (c , a) => ok(AType.Str));
+            coll("min" , (c , a) => ok(elem_of(c)));
+            coll("max" , (c , a) => ok(elem_of(c)));
+            coll("sum" , (c , a) => elem_of(c).SubsetOf(Number) ? ok(elem_of(c).Has(TK.Real) ? AType.Real.Union(elem_of(c).Has(TK.Int) ? AType.Int : AType.Bottom) : AType.Int) : fail($"{elem_of(c)}은/는 숫자가 아닙니다."));
+            builtins[$"{kind}.range"] = (self , a) => a.Length is 0 ? fail("인자: 범위가 필요합니다.") : a.Take(3).All(o => o.SubsetOf(AType.Int)) ? ok(is_list ? AType.List(AType.Int , TK.Int) : AType.Arr(AType.Int , TK.Int)) : fail("범위는 정수여야 합니다.");
+            builtins[$"{kind}.new"] = (self , a) => a.Length is 0 ? fail("인자: 길이가 필요합니다.") : !a[0].SubsetOf(AType.Int) ? fail($"길이는 정수여야 합니다. ({a[0]})")
+                : ok(is_list ? AType.List(a.Length > 1 ? a[1] : AType.Null , TK.Any) : AType.Arr(a.Length > 1 ? a[1] : AType.Null , TK.Any));
+            if (!is_list) continue;
+            coll("push" , (c , a) => a.Skip(1).Select(v => fits_into(c , v)).FirstOrDefault(e => e is not null) is string e ? fail(e) : ok(c) , true);
+            coll("pop" , (c , a) => ok(elem_of(c)) , true);
+            coll("insert" , (c , a) => a.Length < 3 ? fail("인자: 리스트, 인덱스, 값이 필요합니다.") : !a[1].SubsetOf(AType.Int) ? fail($"인덱스는 int여야 합니다. ({a[1]})") : fits_into(c , a[2]) is string e ? fail(e) : ok(c) , true);
+            coll("removeat" , (c , a) => a.Length < 2 ? fail("인자: 제거할 인덱스가 필요합니다.") : !a[1].SubsetOf(AType.Int) ? fail($"인덱스는 int여야 합니다. ({a[1]})") : ok(elem_of(c)) , true);
+            coll("remove" , (c , a) => ok(AType.Bool) , true);
+            coll("clear" , (c , a) => ok(c) , true);
+        }
+        //문자열 함수: 첫 인자가 문자열이어야 하는 것들
+        void text(string name , AType result) =>
+            builtins["string." + name] = (self , a) => a.Length is 0 ? fail("인자: 문자열이 필요합니다.") : a[0].Has(TK.Null) ? fail(NullError) : a[0].Has(TK.Str) ? ok(result) : fail($"{a[0]}은/는 문자열이 아닙니다.");
+        foreach (string name in new[] { "replace" , "substring" , "insert" , "remove" , "toupper" , "tolower" , "trim" , "trimstart" , "trimend" , "padleft" , "padright" })
+            text(name , AType.Str);
+        foreach (string name in new[] { "indexof" , "lastindexof" , "charcode" , "compare" })
+            text(name , AType.Int);
+        foreach (string name in new[] { "contains" , "startswith" , "endswith" , "equals" })
+            text(name , AType.Bool);
+        text("split" , AType.Arr(AType.Str , TK.Str));
+        text("tochararray" , AType.Arr(AType.Str , TK.Str));
+        text("format" , AType.Str);
+        builtins["string.concat"] = (self , a) => ok(AType.Str);
+        builtins["string.join"] = (self , a) => ok(AType.Str);
+        builtins["string.isnullorempty"] = (self , a) => ok(AType.Bool);
+        builtins["string.isnullorwhitespace"] = (self , a) => ok(AType.Bool);
+        builtins["string.fromcharcode"] = (self , a) => a.All(o => o.SubsetOf(AType.Int)) ? ok(AType.Str) : fail("문자 코드는 정수여야 합니다.");
+    }
+
+    //컬렉션 c에 값 v를 넣을수 있는지 (넣을수 없다면 오류 메시지)
+    static string? fits_into(AType c , AType v)
+    {
+        AType elem = elem_of(c);
+        TK clr = c.Has(TK.List) ? c.ListClr : c.ArrClr;
+        AType stored = stored_as(v , elem , clr);
+        if (!stored.SubsetOf(elem)) return $"{c}에는 {elem}만 넣을수 있습니다. ({v})";
+        if (!fits(v , clr)) return $"{c}은/는 실행할 때 원소 타입이 정해진 컬렉션일수 있어서 {v}을/를 넣을수 없을수 있습니다.";
+        return null;
+    }
+    //실수 컬렉션(double[])에 넣은 정수는 실수로 바뀜
+    static AType stored_as(AType v , AType elem , TK clr) =>
+        v.Has(TK.Int) && clr == TK.Real && elem.Has(TK.Real) && !elem.Has(TK.Int) ? v.Without(TK.Int).Union(AType.Real) : v;
 
     static (AType?, string?) ordered(AType[] a)
     {
