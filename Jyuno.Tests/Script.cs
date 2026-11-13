@@ -14,6 +14,9 @@ internal static class Script
     }
     public static (object? Result, List<object?> Output) Run(params string[] lines)
     {
+        //[실험] 테스트 스크립트 모으기 (타입 검사 통과율 측정용)
+        if (Environment.GetEnvironmentVariable("JYUNO_DUMP_SCRIPTS") is string dump)
+            lock (typeof(Script)) File.AppendAllText(dump, System.Text.Json.JsonSerializer.Serialize(string.Join("\n", lines)) + "\n");
         var source = Capture(() => RunOnce(lines, false));
         (object? Result, List<object?> Output, Exception? Error) compiled;
         try
@@ -92,10 +95,19 @@ internal static class Script
         }
         else
             { Interpreter interpreter = runtime.Create(lines); run = () => interpreter.Run(); }
-        Task<object?> task = Task.Run(run);
-        if (Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult() != task)
+        //스레드 풀이 아닌 별도 스레드에서 실행 (한 테스트가 세 번 실행하므로, 스레드 풀에서 기다리면 병렬 테스트 중에 풀이 모자라서 시간 초과가 날수 있음)
+        object? result = null;
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? error = null;
+        Thread thread = new(() =>
+        {
+            try { result = run(); }
+            catch (Exception e) { error = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e); }
+        }) { IsBackground = true };
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(10)))
             throw new TimeoutException("스크립트가 끝나지 않습니다. (무한 루프?)");
-        return (task.GetAwaiter().GetResult(), output);
+        error?.Throw();
+        return (result, output);
     }
 
     public static object? Eval(string expression) => new Runtime().Create().ExecuteLine(expression);
