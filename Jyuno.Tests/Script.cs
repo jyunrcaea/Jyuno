@@ -35,6 +35,9 @@ internal static class Script
             //[실험] 같은 프로그램을 타입 추론 + IL 컴파일로도 실행
             var il = Capture(() => RunOnce(lines, true, JyunoEngine.Il));
             Compare(lines, source, il, "IL");
+            //[실험] 정적 타입 검사기가 증명한 타입으로 만든 IL (검사기가 실패하면 기본 추론)
+            var typed = Capture(() => RunOnce(lines, true, JyunoEngine.IlTyped));
+            Compare(lines, source, typed, "IlTyped");
         }
         if (source.Error is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(source.Error);
@@ -88,7 +91,7 @@ internal static class Script
         if (compiled)
         {
             byte[] image = Jyuno.Compiler.JyunoProgramImage.Build(lines, runtime);
-            JyunoProgram program = Jyuno.Compiler.JyunoProgramImage.Load(image, runtime, engine);
+            JyunoProgram program = Jyuno.Compiler.JyunoProgramImage.Load(image, runtime, engine, HostTypes);
             if (engine is JyunoEngine.Il)
                 Interlocked.Increment(ref program.Engine == "Il" ? ref IlCompiled : ref IlFallback);
             run = program.Run;
@@ -109,6 +112,9 @@ internal static class Script
         error?.Throw();
         return (result, output);
     }
+
+    //검사기에 알려주는 테스트 호스트 함수의 타입
+    static readonly IReadOnlyDictionary<string, string> HostTypes = new Dictionary<string, string> { ["out"] = "(any...) -> null" };
 
     public static object? Eval(string expression) => new Runtime().Create().ExecuteLine(expression);
 }

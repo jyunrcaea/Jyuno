@@ -86,11 +86,13 @@ static class Program
     {
         byte[] image = JyunoProgramImage.Build(lines , Host("" , out _));
         Runtime runtime = Host(input , out Sink sink);
-        JyunoProgram program = JyunoProgramImage.Load(image , runtime , engine);
+        JyunoProgram program = JyunoProgramImage.Load(image , runtime , engine , Hosts);
         if (engine is not JyunoEngine.Closure)
         {
             if (program.Engine == engine.ToString()) il_compiled++;
             else { il_fallback++; fallback_reasons[program.Engine] = fallback_reasons.GetValueOrDefault(program.Engine) + 1; }
+            if (Environment.GetEnvironmentVariable("FALLBACK_DUMP") is string dump && program.Engine.StartsWith("Closure (System"))
+                File.AppendAllText(dump , JsonSerializer.Serialize(new { reason = program.Engine , code = string.Join("\n" , lines) }) + "\n");
         }
         return Execute(program.Run , sink);
     }
@@ -270,7 +272,7 @@ static class Program
                     foreach (var job in jobs) Host(job.Input , out _);
                     long h1 = Stopwatch.GetTimestamp();
                     long j0 = Stopwatch.GetTimestamp();
-                    foreach (var job in jobs) { var rt = Host(job.Input , out _); JyunoProgramImage.Load(job.Image , rt , JyunoEngine.Il).Run(); }
+                    foreach (var job in jobs) { var rt = Host(job.Input , out _); JyunoProgramImage.Load(job.Image , rt , engine is JyunoEngine.Closure ? JyunoEngine.Il : engine , Hosts).Run(); }
                     long j1 = Stopwatch.GetTimestamp();
                     if (i >= n / 2) { ti += b - a - (h1 - h0); ts += c - b - (h1 - h0); tl += d - c - (h1 - h0); tc += e - d - (h1 - h0); tj += j1 - j0 - (h1 - h0); }
                 }
@@ -351,13 +353,22 @@ static class Program
                 using StreamWriter expected = new(Path.Combine(dir , "expected.jsonl"));
                 Dictionary<string , int> reasons = new();
                 long bytes = 0;
+                int typed_count = 0;
                 var sw = Stopwatch.StartNew();
                 foreach (var (name , lines) in sources)
                 {
                     string? code , reason;
                     try
                     {
-                        code = JyunoProgramImage.EmitCSharp(lines , fuzz ? Host("" , out _) : new Runtime(Runtime.AddJyunoCommandType.Math) , "JyunoGen" , name , out reason);
+                        Runtime profile = fuzz ? Host("" , out _) : new Runtime(Runtime.AddJyunoCommandType.Math);
+                        //JYUNO_ENGINE=IlTyped: 검사기가 증명한 타입으로
+                        if (engine is JyunoEngine.IlTyped)
+                        {
+                            code = JyunoProgramImage.EmitCSharp(lines , profile , "JyunoGen" , name , out reason , out bool typed , Hosts);
+                            if (typed) typed_count++;
+                        }
+                        else
+                            code = JyunoProgramImage.EmitCSharp(lines , profile , "JyunoGen" , name , out reason);
                     }
                     catch (JyunoBuildException)
                     {
@@ -380,7 +391,7 @@ static class Program
                 }
                 File.WriteAllText(Path.Combine(dir , "Gen" , "Registry.cs") ,
                     "static class Registry\n{\n    public static readonly (string Name, System.Func<Jyuno.Runtime, System.Func<object>> Make)[] All =\n    {\n" + string.Join("\n" , registry) + "\n    };\n}\n");
-                Console.WriteLine($"C# {registry.Count}개 ({bytes / 1024.0:F0} KB, {sw.Elapsed.TotalMilliseconds:F0} ms), 못 만듦 {sources.Count - registry.Count}");
+                Console.WriteLine($"C# {registry.Count}개 ({bytes / 1024.0:F0} KB, {sw.Elapsed.TotalMilliseconds:F0} ms), 못 만듦 {sources.Count - registry.Count}{(engine is JyunoEngine.IlTyped ? $", 검사기 타입 사용 {typed_count}" : "")}");
                 foreach (var (reason , n) in reasons.OrderByDescending(o => o.Value).Take(8))
                     Console.WriteLine($"  {reason} {n}");
                 return 0;
@@ -517,12 +528,39 @@ static class Program
             }
             case "noop":
                 return 0;
+            case "typestats":
+            {
+                //typestats <풀이 폴더 또는 .jyuno 폴더>: 기본 추론(Il)과 검사기 타입(IlTyped)에서 타입이 정해진 칸/시그니처 수
+                var jit = typeof(Interpreter).GetNestedType("StaticJit" , System.Reflection.BindingFlags.NonPublic)!;
+                var field = jit.GetField("LastStats" , System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+                foreach (JyunoEngine e in new[] { JyunoEngine.Il , JyunoEngine.IlTyped })
+                {
+                    int programs = 0 , typed_programs = 0;
+                    long ts = 0 , n = 0 , tf = 0 , nf = 0 , inst = 0;
+                    foreach (string file in Directory.GetFiles(args[1] , "*.jyuno").OrderBy(o => o))
+                    {
+                        string[] lines = File.ReadAllText(file).Replace("\r\n" , "\n").Split('\n');
+                        byte[] image;
+                        try { image = JyunoProgramImage.Build(lines , Host("" , out _)); } catch (JyunoBuildException) { continue; }
+                        JyunoProgram p = JyunoProgramImage.Load(image , Host("" , out _) , e , Hosts);
+                        if (!p.Engine.StartsWith("Il")) continue;
+                        programs++;
+                        if (p.Engine == "IlTyped") typed_programs++;
+                        var st = ((int , int , int , int , int))field.GetValue(null)!;
+                        ts += st.Item1; n += st.Item2; tf += st.Item3; nf += st.Item4; inst += st.Item5;
+                        if (Environment.GetEnvironmentVariable("TYPESTATS_VERBOSE") is "1")
+                            Console.WriteLine($"  {Path.GetFileNameWithoutExtension(file)} [{p.Engine}] 칸 {st.Item1}/{st.Item2} 시그니처 {st.Item3}/{st.Item4} 함수 {st.Item5}");
+                    }
+                    Console.WriteLine($"{e}: 프로그램 {programs}개 (검사기 타입 사용 {typed_programs}), 타입이 정해진 변수 칸 {ts}/{n} ({100.0 * ts / Math.Max(1 , n):F1}%), 매개변수/반환값 {tf}/{nf} ({100.0 * tf / Math.Max(1 , nf):F1}%), 함수(인스턴스) {inst}");
+                }
+                return 0;
+            }
             case "jitdump":
             {
                 //[실험] IL 백엔드가 만든 식 트리 출력
                 string[] lines = File.ReadAllText(args[1]).Replace("\r\n" , "\n").TrimEnd('\n').Split('\n');
-                byte[] image = JyunoProgramImage.Build(lines , new Runtime(Runtime.AddJyunoCommandType.Math));
-                JyunoProgram p = JyunoProgramImage.Load(image , new Runtime(Runtime.AddJyunoCommandType.Math) , JyunoEngine.Il);
+                byte[] image = JyunoProgramImage.Build(lines , Host("" , out _));
+                JyunoProgram p = JyunoProgramImage.Load(image , Host("" , out _) , engine is JyunoEngine.Closure ? JyunoEngine.Il : engine , Hosts);
                 Console.WriteLine(p.Engine);
                 var jit = typeof(Interpreter).GetNestedType("StaticJit" , System.Reflection.BindingFlags.NonPublic)!;
                 var lambda = (System.Linq.Expressions.LambdaExpression?)jit.GetField("LastLambda" , System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null);

@@ -80,6 +80,24 @@ public static class JyunoTypeChecker
         return new TypeChecker(program , profile , level , hosts) { Narrowing = narrowing }.Run();
     }
 
+    /// <summary>
+    /// [실험] 코드 생성(IL, C#)에 쓸 타입. null은 엄격 단계처럼 따르고, 유니온 중 하나라도 되는 연산은 실행할 때 확인하는 것으로 봄.
+    /// 검사가 실패하면(어떤 타입으로도 안 되는 연산, 제한 모드가 아닌 코드 등) null
+    /// </summary>
+    internal static CodegenFacts? Facts(IrProgram program , Runtime profile , IReadOnlyDictionary<string , string>? hosts)
+    {
+        try
+        {
+            TypeChecker checker = new(program , profile , TypeCheckLevel.Strict , hosts) { Codegen = true };
+            checker.Run();
+            return checker.Facts is { Usable: true } facts ? facts : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>JyunoWeb 채점 호스트(콘솔 + 예시 함수)의 시그니처</summary>
     public static IReadOnlyDictionary<string , string> JyunoWebHost { get; } = new Dictionary<string , string> {
         ["console.write"] = "() -> null; (any) -> null; (string, any...) -> null",
@@ -93,6 +111,32 @@ public static class JyunoTypeChecker
         ["text.at"] = "(string, int|double, any...) -> string",
         ["text.upper"] = "(string, any...) -> string",
     };
+}
+
+/// <summary>[실험] 검사기가 증명한 타입 (코드 생성용, Compiler/StaticJitFacts.cs)</summary>
+internal sealed class CodegenFacts
+{
+    /// <summary>최상위 영역의 열쇠 (다른 영역은 그 영역을 만든 For/Func 문장)</summary>
+    public static readonly object Root = new();
+    public bool Usable;
+    /// <summary>함수 인스턴스 (최상위는 "")</summary>
+    public readonly Dictionary<string , Instance> Instances = new(StringComparer.Ordinal);
+    /// <summary>(호출하는 인스턴스, 호출) → 호출되는 인스턴스들</summary>
+    public readonly Dictionary<(string , IrCall) , HashSet<string>> Calls = new();
+    /// <summary>(영역, 칸) → 프로그램 전체의 합, 다른 함수가 쓰는 칸인지</summary>
+    public readonly Dictionary<(object , int) , (AType Summary, bool Shared)> Slots = new();
+
+    public sealed class Instance
+    {
+        public Instance(IrStmt? func , AType[] args) { Func = func; Args = args; }
+        public readonly IrStmt? Func;
+        public readonly AType[] Args;
+        public AType Ret = AType.Bottom;
+        /// <summary>이 인스턴스가 (영역, 칸)에 넣은 모든 값</summary>
+        public readonly Dictionary<(object , int) , AType> Slots = new();
+        /// <summary>이 인스턴스에서 식마다 나온 모든 값 (흐름에 따라 좁힌 타입)</summary>
+        public readonly Dictionary<IrExpr , AType> Exprs = new(ReferenceEqualityComparer.Instance);
+    }
 }
 
 //─────────── 타입 ───────────
@@ -324,6 +368,7 @@ sealed class TypeChecker
         public readonly FuncInfo? Owner;
         public readonly SlotInfo[] Slots;
         public FrameInfo? Parent;
+        public object Key = null!; //CodegenFacts.Root 또는 영역을 만든 문장 (For, Func)
     }
     sealed class SlotInfo
     {
@@ -398,7 +443,7 @@ sealed class TypeChecker
     readonly Dictionary<object , FrameInfo> frames = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<IrStmt , FuncInfo> functions = new(ReferenceEqualityComparer.Instance);
     readonly List<SlotInfo> all_slots = new();
-    static readonly object RootKey = new();
+    static readonly object RootKey = CodegenFacts.Root;
 
     readonly Dictionary<(int, string, string) , TypeDiagnostic> errors = new();
     //느슨한 단계에서 실행할 때 확인할 곳 (경고)
@@ -411,6 +456,15 @@ sealed class TypeChecker
     bool changed;
     int instances;
     const int MaxInstances = 3000;
+
+    /// <summary>
+    /// 코드 생성용으로 검사: null은 엄격 단계처럼 모두 따르고, 유니온 중 하나라도 되는 연산은 통과 (나머지는 실행할 때 확인)
+    /// 결과로 함수 인스턴스마다 칸의 타입과 호출 대상을 모음 (Facts)
+    /// </summary>
+    internal bool Codegen;
+    internal CodegenFacts? Facts;
+    string facts_key = "";
+    CodegenFacts.Instance facts_now = null!;
 
     public TypeChecker(IrProgram program , Runtime profile , TypeCheckLevel level , IReadOnlyDictionary<string , string>? hosts)
     {
@@ -453,6 +507,12 @@ sealed class TypeChecker
             instances = 0;
             foreach (FuncInfo f in functions.Values) f.Instances.Clear();
             top = new Ctx();
+            if (Codegen)
+            {
+                Facts = new CodegenFacts();
+                facts_key = "";
+                Facts.Instances[""] = facts_now = new CodegenFacts.Instance(null , Array.Empty<AType>());
+            }
             try
             {
                 State st = enter(new State() , root);
@@ -471,6 +531,12 @@ sealed class TypeChecker
             }
         } while (changed);
 
+        if (Codegen && Facts is not null)
+        {
+            Facts.Usable = errors.Count is 0;
+            foreach (SlotInfo s in all_slots)
+                Facts.Slots[(s.Frame.Key , s.Index)] = (s.Summary , s.Shared);
+        }
         foreach (FuncInfo f in functions.Values)
             if (f.Instances.Count is 0)
                 warnings.Add(new TypeDiagnostic(f.Def.Line , "검사 안 함" , $"함수 '{f.Name}'은/는 호출되지 않아서 검사하지 않았습니다."));
@@ -493,7 +559,7 @@ sealed class TypeChecker
     {
         if (!frames.TryGetValue(key , out FrameInfo? f))
         {
-            frames[key] = f = new FrameInfo(size , owner) { Parent = parent };
+            frames[key] = f = new FrameInfo(size , owner) { Parent = parent , Key = key };
             all_slots.AddRange(f.Slots);
         }
         return f;
@@ -631,7 +697,7 @@ sealed class TypeChecker
     {
         if (current_instance is not null)
             message += $" ({current_instance}로 호출할 때)";
-        var target = partial && level is TypeCheckLevel.Lenient ? checks : errors;
+        var target = partial && (level is TypeCheckLevel.Lenient || Codegen) ? checks : errors;
         if (target == checks) category = "실행 중 확인/" + category;
         var key = (line , category , message);
         if (!target.ContainsKey(key))
@@ -652,6 +718,12 @@ sealed class TypeChecker
 
     void grow_summary(SlotInfo s , AType t)
     {
+        if (Codegen)
+        {
+            var k = (s.Frame.Key , s.Index);
+            AType add = t.Without(TK.Undef | TK.Fn);
+            facts_now.Slots[k] = facts_now.Slots.TryGetValue(k , out AType? old) ? old.Union(add) : add;
+        }
         AType u = s.Summary.Union(t.Without(TK.Undef | TK.Fn));
         if (!u.Equals(s.Summary))
         {
@@ -975,7 +1047,16 @@ sealed class TypeChecker
         return st;
     }
 
+    //식 하나의 타입 (코드 생성용으로 검사할 때는 인스턴스마다 식의 타입을 모음: 좁힌 타입, 연산 결과)
     AType expr(IrExpr e , ref State st , Ctx ctx , int line)
+    {
+        AType t = expr_core(e , ref st , ctx , line);
+        if (Codegen)
+            facts_now.Exprs[e] = facts_now.Exprs.TryGetValue(e , out AType? old) ? old.Union(t) : t;
+        return t;
+    }
+
+    AType expr_core(IrExpr e , ref State st , Ctx ctx , int line)
     {
         switch (e)
         {
@@ -1230,7 +1311,7 @@ sealed class TypeChecker
             AType[] args = new AType[Math.Max(f.Arity , call.Arguments.Length)];
             for (int i = 0 ; i < call.Arguments.Length ; i++) args[i] = expr(call.Arguments[i] , ref st , ctx , line);
             for (int i = call.Arguments.Length ; i < args.Length ; i++) args[i] = AType.Null;
-            return instance(f , args.Take(f.Arity).ToArray() , st , ctx , line);
+            return instance(f , args.Take(f.Arity).ToArray() , st , ctx , line , call);
         }
         //변수 칸 → 전역
         AType result = AType.Bottom;
@@ -1312,7 +1393,7 @@ sealed class TypeChecker
     }
 
     //함수 호출: 인자 타입 조합마다 함수 본문을 따로 검사 (단형화)
-    AType instance(FuncInfo f , AType[] args , State st , Ctx caller , int line)
+    AType instance(FuncInfo f , AType[] args , State st , Ctx caller , int line , IrCall? call = null)
     {
         //함수가 보는 바깥 칸의 정의 여부 (호출하는 자리 기준)
         Dictionary<SlotInfo , Def> outer = new(ReferenceEqualityComparer.Instance);
@@ -1332,6 +1413,12 @@ sealed class TypeChecker
         string full = key + "#" + f.Id + "#" + defs;
         string shown = key.ToString();
         f.Instances.Add(shown);
+        if (Codegen && call is not null)
+        {
+            if (!Facts!.Calls.TryGetValue((facts_key , call) , out HashSet<string>? targets))
+                Facts.Calls[(facts_key , call)] = targets = new();
+            targets.Add(full);
+        }
         if (memo.TryGetValue(full , out AType? done))
             return done;
         if (in_progress.Contains(full))
@@ -1351,6 +1438,13 @@ sealed class TypeChecker
         stack.Add(f.Frame);
         string? outer_instance = current_instance;
         current_instance = shown;
+        string outer_key = facts_key;
+        CodegenFacts.Instance outer_facts = facts_now;
+        if (Codegen)
+        {
+            facts_key = full;
+            Facts!.Instances[full] = facts_now = new CodegenFacts.Instance(f.Def , args);
+        }
         State? end = block(f.Def.Body! , body_in , ctx);
         current_instance = outer_instance;
         stack.Clear();
@@ -1366,6 +1460,12 @@ sealed class TypeChecker
         }
         returns[shown] = returns.GetValueOrDefault(shown , AType.Bottom).Union(ret);
         memo[full] = ret;
+        if (Codegen)
+        {
+            facts_now.Ret = ret;
+            facts_key = outer_key;
+            facts_now = outer_facts;
+        }
         return ret;
     }
 
@@ -1522,6 +1622,8 @@ sealed class TypeChecker
             for (int i = 1 ; i < a.Length ; i++)
             {
                 if (num(sum) && num(a[i])) sum = arith(sum , a[i]);
+                //null과 숫자의 덧셈은 오류가 아니라 null (Values.Add의 dynamic 덧셈)
+                else if (sum.Has(TK.Null) && num(a[i]) || num(sum) && a[i].Has(TK.Null)) sum = AType.Null;
                 else return fail(a.Any(o => o.Has(TK.Null)) ? NullError : $"{sum}와/과 {a[i]}은/는 더할수 없습니다.");
             }
             return ok(sum);

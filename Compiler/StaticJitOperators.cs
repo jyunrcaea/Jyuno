@@ -100,6 +100,17 @@ public partial class Interpreter
                 case "??":
                 {
                     E left = operand(o[0]);
+                    //null일수도 있는 타입 (사실 모드: long?, double?, bool?, null일수 있는 string): 값이 있으면 그 값, 없으면 오른쪽
+                    bool value_nullable = Nullable.GetUnderlyingType(left.Type) is not null;
+                    if (value_nullable || left.Type == typeof(string) && nullable(type_of(o[0])))
+                    {
+                        Type t = clr(type_of(op));
+                        ParameterExpression n = E.Variable(left.Type , "n");
+                        E has = value_nullable ? E.Property(n , "HasValue") : E.NotEqual(n , E.Constant(null , typeof(string)));
+                        return E.Block(t , new[] { n } ,
+                            E.Assign(n , left) ,
+                            E.Condition(has , conv(n , t) , conv(operand(o[1]) , t)));
+                    }
                     if (left.Type != typeof(object))
                         return left;
                     ParameterExpression v = E.Variable(typeof(object) , "v");
@@ -114,21 +125,43 @@ public partial class Interpreter
             {
                 E x = operand(o[0]);
                 Ty tx = norm(type_of(o[0]));
-                switch (op.Symbol)
-                {
-                    case "u!" when tx is Ty.Bool: return E.Not(x);
-                    case "u-" when tx is Ty.Long or Ty.Double: return E.Negate(x);
-                    case "u+" when tx is Ty.Long or Ty.Double: return x;
-                    case "u~" when tx is Ty.Long: return E.OnesComplement(x);
-                }
+                if (unary_fast(op.Symbol , x , tx) is E quick)
+                    return quick;
+                //null일수도 있는 값: 값이 있으면 빠르게, 없으면 도우미 (오류)
+                if (facts_mode && nullable(tx) && guarded(x , tx , E.Constant(0L) , Ty.Long , clr(result) , (v , _) => unary_fast(op.Symbol , v , non_null(tx)) , (v , _) => E.Call(M_OpUnary , E.Constant(code) , boxed(v))) is E g)
+                    return g;
                 E generic1 = E.Call(M_OpUnary , E.Constant(code) , boxed(x));
                 return result is Ty.Bool ? E.Convert(generic1 , typeof(bool)) : generic1;
             }
             E a = operand(o[0]), b = operand(o[1]);
             Ty ta = norm(type_of(o[0])), tb = norm(type_of(o[1]));
+            if (operator_fast(op.Symbol , a , ta , b , tb) is E fast)
+                return fast;
+            if (facts_mode && (nullable(ta) || nullable(tb)))
+            {
+                Ty na = non_null(ta) , nb = non_null(tb);
+                if (na is Ty.String && nb is Ty.String && op.Symbol is "+" && (ta is Ty.String || tb is Ty.String))
+                    return conv(operator_fast("+" , a , na , b , nb)! , clr(result));
+                if (guarded(a , ta , b , tb , clr(result) , (x , y) => operator_fast(op.Symbol , x , na , y , nb) , (x , y) => E.Call(M_OpBinary , E.Constant(code) , boxed(x) , boxed(y))) is E g)
+                    return g;
+            }
+            E generic = E.Call(M_OpBinary , E.Constant(code) , boxed(a) , boxed(b));
+            return result is Ty.Bool ? E.Convert(generic , typeof(bool)) : generic;
+        }
+
+        static E? unary_fast(string symbol , E x , Ty tx) => symbol switch {
+            "u!" when tx is Ty.Bool => E.Not(x),
+            "u-" when tx is Ty.Long or Ty.Double => E.Negate(x),
+            "u+" when tx is Ty.Long or Ty.Double => x,
+            "u~" when tx is Ty.Long => E.OnesComplement(x),
+            _ => null
+        };
+
+        static E? operator_fast(string symbol , E a , Ty ta , E b , Ty tb)
+        {
             if (ta is Ty.Long && tb is Ty.Long)
             {
-                switch (op.Symbol)
+                switch (symbol)
                 {
                     case "+": return E.Add(a , b);
                     case "-": return E.Subtract(a , b);
@@ -148,11 +181,11 @@ public partial class Interpreter
                     case "!=": return E.NotEqual(a , b);
                 }
             }
-            else if (numeric(ta) && numeric(tb) && op.Symbol is "+" or "-" or "*" or "/" or "%")
+            else if (numeric(ta) && numeric(tb) && symbol is "+" or "-" or "*" or "/" or "%")
             {
                 E da = ta is Ty.Double ? a : E.Convert(a , typeof(double));
                 E db = tb is Ty.Double ? b : E.Convert(b , typeof(double));
-                switch (op.Symbol)
+                switch (symbol)
                 {
                     case "+": return E.Add(da , db);
                     case "-": return E.Subtract(da , db);
@@ -161,11 +194,11 @@ public partial class Interpreter
                     case "%": return tb is Ty.Long ? E.Call(M_OpModDL , da , b) : E.Modulo(da , db);
                 }
             }
-            else if (ta is Ty.String && tb is Ty.String && op.Symbol is "+")
+            else if (ta is Ty.String && tb is Ty.String && symbol is "+")
                 return E.Call(M_Concat2 , a , b);
             else if (ta is Ty.Bool && tb is Ty.Bool)
             {
-                switch (op.Symbol)
+                switch (symbol)
                 {
                     case "&": return E.And(a , b);
                     case "|": return E.Or(a , b);
@@ -174,8 +207,7 @@ public partial class Interpreter
                     case "!=": return E.NotEqual(a , b);
                 }
             }
-            E generic = E.Call(M_OpBinary , E.Constant(code) , boxed(a) , boxed(b));
-            return result is Ty.Bool ? E.Convert(generic , typeof(bool)) : generic;
+            return null;
         }
 
         //─────────── 실행 중 도우미 ───────────

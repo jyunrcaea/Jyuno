@@ -19,7 +19,8 @@ public partial class Interpreter
 {
     internal sealed partial class StaticJit
     {
-        enum Ty : byte { Bottom, Long, Double, Bool, String, Object }
+        //LongN, DoubleN, BoolN, StringN: null일수도 있는 값 (사실 모드에서만, long?/double?/bool?/string)
+        enum Ty : byte { Bottom, Long, Double, Bool, String, Object, LongN, DoubleN, BoolN, StringN }
         static Ty join(Ty a , Ty b) => a == Ty.Bottom ? b : b == Ty.Bottom ? a : a == b ? a : Ty.Object;
         static Ty norm(Ty t) => t == Ty.Bottom ? Ty.Object : t;
         static Type clr(Ty t) => norm(t) switch {
@@ -27,8 +28,14 @@ public partial class Interpreter
             Ty.Double => typeof(double),
             Ty.Bool => typeof(bool),
             Ty.String => typeof(string),
+            Ty.LongN => typeof(long?),
+            Ty.DoubleN => typeof(double?),
+            Ty.BoolN => typeof(bool?),
+            Ty.StringN => typeof(string),
             _ => typeof(object)
         };
+        static bool nullable(Ty t) => t is Ty.LongN or Ty.DoubleN or Ty.BoolN or Ty.StringN;
+        static Ty non_null(Ty t) => t switch { Ty.LongN => Ty.Long, Ty.DoubleN => Ty.Double, Ty.BoolN => Ty.Bool, Ty.StringN => Ty.String, _ => t };
         static bool numeric(Ty t) => t is Ty.Long or Ty.Double;
 
         sealed class Unsupported : Exception { public Unsupported(string message) : base(message) { } }
@@ -40,7 +47,9 @@ public partial class Interpreter
             public Function? Func;
             public Ty Type;
             public ParameterExpression? Var, Defined, Const; //Const: const로 정의되었는지 (실행 중)
+            public Dictionary<string , ParameterExpression>? FuncVars; //사실 모드: 함수 인스턴스마다 대리자 (Defined = 정의되었는지)
             public int Id; //C# 생성: 변수 이름 번호
+            public Dictionary<string , string>? FuncNames; //C# 생성, 사실 모드: 함수 인스턴스마다 로컬 함수 이름
         }
         sealed class Frame
         {
@@ -60,11 +69,29 @@ public partial class Interpreter
             public LabelTarget? Return;
             public Type? DelegateType;
             public int Id; //C# 생성
+            public string Key = ""; //사실 모드: 검사기 인스턴스
         }
 
         sealed class Counter { public int Depth; }
         //디버그용: 마지막으로 만든 식 트리
         internal static LambdaExpression? LastLambda;
+        //측정용: 마지막 프로그램의 (타입이 정해진 칸, 모든 변수 칸, 타입이 정해진 매개변수/반환값, 모든 매개변수/반환값, 함수 인스턴스)
+        internal static (int TypedSlots, int Slots, int TypedSignature, int Signature, int Instances) LastStats;
+        (int, int, int, int, int) stats()
+        {
+            IEnumerable<Frame> all = facts_mode ? inst_frames.Values.Append(frames[RootKey]) : frames.Values;
+            IEnumerable<Function> fs = facts_mode ? inst_functions.Values : functions.Values;
+            int ts = 0 , n = 0 , tf = 0 , nf = 0 , count = 0;
+            foreach (Frame f in all)
+                foreach (Slot slot in f.Slots)
+                    if (slot.IsVar) { n++; if (norm(slot.Type) is not Ty.Object) ts++; }
+            foreach (Function f in fs)
+            {
+                count++;
+                foreach (Ty t in f.Params.Append(f.Ret)) { nf++; if (norm(t) is not Ty.Object) tf++; }
+            }
+            return (ts , n , tf , nf , count);
+        }
 
         public StaticJit(IrProgram program , object?[] imports)
         {
@@ -83,13 +110,19 @@ public partial class Interpreter
         bool aot;
 
         /// <summary>컴파일할수 없는 프로그램이라면 null (이유는 reason)</summary>
-        public static Func<object?>? TryCompile(IrProgram program , object?[] imports , bool interpret , out string? reason)
+        public static Func<object?>? TryCompile(IrProgram program , object?[] imports , bool interpret , out string? reason) => TryCompile(program , imports , interpret , out reason , null , out _);
+
+        /// <summary>facts: 검사기가 증명한 타입 (null이거나 쓸수 없으면 기본 추론, typed로 알려줌)</summary>
+        public static Func<object?>? TryCompile(IrProgram program , object?[] imports , bool interpret , out string? reason , CodegenFacts? facts , out bool typed)
         {
+            typed = false;
             try
             {
-                StaticJit jit = new(program , imports);
+                StaticJit jit = new(program , imports) { facts = facts };
                 reason = null;
-                return jit.compile(interpret);
+                Func<object?> result = jit.compile(interpret);
+                typed = jit.facts_mode;
+                return result;
             }
             catch (Unsupported e)
             {
@@ -169,6 +202,7 @@ public partial class Interpreter
                     slot.IsFunc = true;
                     slot.FuncDefs++;
                     Function function = new(s);
+                    if (current is not null) nested_functions = true;
                     functions[s] = function;
                     slot.Func = function;
                     Function? outer = current;
@@ -226,6 +260,7 @@ public partial class Interpreter
                     break;
                 case IrLabel label:
                     stack[^1].Slots[label.Slot].IsVar = true;
+                    has_labels = true; //레이블 값은 C# int라서 검사기의 int(long)와 다름
                     break;
             }
         }
@@ -234,6 +269,8 @@ public partial class Interpreter
 
         void widen(ref Ty target , Ty value)
         {
+            if (facts_mode)
+                return; //검사기가 정한 타입을 그대로 씀
             Ty joined = join(target , value);
             if (joined != target)
             {
@@ -346,7 +383,19 @@ public partial class Interpreter
         }
 
         //식의 타입 (대입과 함수 호출 인자의 타입을 변수/매개변수에 모음)
+        //사실 모드: 검사기가 이 인스턴스에서 본 식의 타입 (흐름에 따라 좁힌 타입), 없으면 기본 규칙
         Ty type_of(IrExpr e)
+        {
+            if (facts_mode && e is not (IrAssign or IrConstDef or IrLabel) && expr_fact(e) is AType t && !t.IsBottom)
+            {
+                if (e is IrCall call && function_slot(call.Name) is Slot fs)
+                    call_target(call , fs.Func!.Def);
+                return ty_of(t);
+            }
+            return type_of_basic(e);
+        }
+
+        Ty type_of_basic(IrExpr e)
         {
             switch (e)
             {
@@ -381,6 +430,8 @@ public partial class Interpreter
                 {
                     Ty[] ts = Array.ConvertAll(call.Arguments , type_of);
                     Slot? slot = function_slot(call.Name);
+                    if (slot is not null && facts_mode)
+                        return inst_function(slot.Func!.Def , call_target(call , slot.Func.Def)).Ret;
                     if (slot is not null)
                     {
                         Function function = slot.Func!;
@@ -509,6 +560,11 @@ public partial class Interpreter
                 }
             foreach (Function f in functions.Values)
                 f.Params = new Ty[f.Arity];
+            if (setup_facts(root))
+            {
+                stack.Clear();
+                return root;
+            }
             int rounds = 0;
             do
             {
@@ -523,6 +579,28 @@ public partial class Interpreter
         Func<object?> compile(bool interpret)
         {
             Frame root = analyze();
+            //사실 모드: 검사기가 닿지 않는다고 본 호출이 있으면 "*" 인스턴스를 더해서 다시 만듦
+            for (int pass = 0 ; ; pass++)
+            {
+                needed_changed = false;
+                Expression<Func<object?>> lambda;
+                facts_conv = facts_mode;
+                try { lambda = build(root); }
+                finally { facts_conv = false; }
+                if (!needed_changed)
+                {
+                    LastLambda = lambda;
+                    LastStats = stats();
+                    return lambda.Compile(interpret);
+                }
+                if (pass > 20) throw new Unsupported("함수 인스턴스가 정해지지 않음");
+            }
+        }
+
+        Expression<Func<object?>> build(Frame root)
+        {
+            ctx_key = "";
+            breaks.Clear();
             top_return = E.Label(typeof(object) , "return");
             ParameterExpression error = E.Parameter(typeof(GrammarErrorException) , "e");
             E body = E.Block(
@@ -530,9 +608,7 @@ public partial class Interpreter
                 E.TryCatch(
                     frame_block(root , program.Root , null , E.Label(top_return , E.Constant(null , typeof(object)))),
                     E.Catch(error , E.Convert(E.PropertyOrField(error , nameof(GrammarErrorException.Error)) , typeof(object)))));
-            var lambda = E.Lambda<Func<object?>>(body , "jyuno_main" , Array.Empty<ParameterExpression>());
-            LastLambda = lambda;
-            return lambda.Compile(interpret);
+            return E.Lambda<Func<object?>>(body , "jyuno_main" , Array.Empty<ParameterExpression>());
         }
 
         //한 영역의 블록: 칸 변수를 만들고 (반복마다 새 영역이므로) 정의되지 않은 상태로 시작
@@ -542,7 +618,9 @@ public partial class Interpreter
             List<E> body = new();
             foreach (Slot slot in frame.Slots)
             {
-                if (slot.IsFunc)
+                if (slot.IsFunc && facts_mode)
+                    declare_function_slot(slot , variables , body);
+                else if (slot.IsFunc)
                 {
                     slot.Var = E.Variable(delegate_type(slot.Func!) , "f");
                     variables.Add(slot.Var);
@@ -601,8 +679,16 @@ public partial class Interpreter
                 return E.Convert(e , to);
             if (e.Type == typeof(void))
                 return E.Block(e , E.Default(to));
+            //null일수도 있는 타입 (사실 모드): long → long?, 검사기가 null이 아니라고 증명한 자리의 long? → long
+            if (Nullable.GetUnderlyingType(to) == e.Type || Nullable.GetUnderlyingType(e.Type) == to)
+                return E.Convert(e , to);
+            //사실 모드: 검사기가 일어나지 않는다고 증명한 경로 (예: 지역 변수가 정의된 뒤 바깥 변수에 쓰는 갈래)
+            if (facts_conv)
+                return E.Block(e , E.Throw(E.New(C_Exception , E.Constant("[IlTyped] 정적 타입 검사가 증명한 타입과 다른 값입니다.")) , to));
             throw new Unsupported($"{e.Type} → {to}");
         }
+        //사실 모드로 만드는 중 (conv는 정적 함수라서 스레드마다 표시)
+        [ThreadStatic] static bool facts_conv;
         static E boxed(E e) => conv(e , typeof(object));
 
         E expression(IrExpr ir)
@@ -670,6 +756,10 @@ public partial class Interpreter
         E read_name(IrName name , Type type)
         {
             Slot[] slots = slots_of(name);
+            if (slots.Length is 1 && slots[0].IsFunc && facts_mode)
+                return E.Condition(E.Not(slots[0].Defined!) ,
+                    fail($"'{name.Name}'은/는 알수없는 변수/함수 입니다." , typeof(object)) ,
+                    fail($"'{name.Name}'에서 값을 가져올수 없습니다." , typeof(object)));
             if (slots.Length is 1 && slots[0].IsFunc)
                 return E.Condition(E.Equal(slots[0].Var! , E.Constant(null , slots[0].Var!.Type)) ,
                     fail($"'{name.Name}'은/는 알수없는 변수/함수 입니다." , typeof(object)) ,
@@ -757,18 +847,24 @@ public partial class Interpreter
                 else
                     chain = fail($"'{name}'는 함수 또는 변수가 아닙니다." , typeof(object));
             }
+            //사실 모드에서 인자 없이 쓴 변수 이름: 박싱하지 않고 검사기의 타입 그대로
+            Type? want = facts_mode && !call.HasArguments ? clr(type_of(call)) : null;
+            if (want is not null)
+                chain = conv(chain , want);
             for (int k = slots.Length - 1 ; k >= 0 ; k--)
             {
                 Slot slot = slots[k];
                 if (!slot.IsVar)
                     continue;
-                chain = E.Condition(slot.Defined! , value_call(slot.Var! , call) , chain);
+                chain = E.Condition(slot.Defined! , want is null ? value_call(slot.Var! , call) : conv(slot.Var! , want) , chain);
             }
             return chain;
         }
 
         E direct_call(Slot slot , IrCall call)
         {
+            if (facts_mode)
+                return facts_direct_call(slot , call);
             string name = call.Name.Name;
             {
                 Function f = slot.Func!;
@@ -838,7 +934,7 @@ public partial class Interpreter
                     if (ts[0] is Ty.Bool) return E.Not(args[0]);
                     return E.Call(M_Intrinsic1 , callee_e , boxed(args[0]));
                 case 2:
-                    return binary(op , callee_e , args[0] , ts[0] , args[1] , ts[1]);
+                    return binary(op , callee_e , args[0] , ts[0] , args[1] , ts[1] , facts_mode ? clr(type_of(ir)) : null);
                 default:
                     if (ts.All(numeric))
                     {
@@ -853,9 +949,48 @@ public partial class Interpreter
             }
         }
 
-        E binary(Intrinsic op , E callee , E a , Ty ta , E b , Ty tb)
+        //want: 사실 모드에서 이 식의 타입 (null일수도 있는 값을 확인하고 빠르게 계산할때 두 갈래를 맞춤)
+        E binary(Intrinsic op , E callee , E a , Ty ta , E b , Ty tb , Type? want = null)
         {
-            Ty result = binary_type(op , ta , tb);
+            if (binary_fast(op , callee , a , ta , b , tb) is E fast)
+                return fast;
+            if (want is not null && (nullable(ta) || nullable(tb)))
+            {
+                Ty na = non_null(ta) , nb = non_null(tb);
+                //문자열의 덧셈(한쪽이 확실한 문자열)과 같음 비교는 null도 인터프리터와 같게 처리됨
+                if (na is Ty.String && nb is Ty.String && (op is Intrinsic.Equal || op is Intrinsic.Add && (ta is Ty.String || tb is Ty.String)))
+                    return conv(binary_fast(op , callee , a , na , b , nb)! , want);
+                if (guarded(a , ta , b , tb , want , (x , y) => binary_fast(op , callee , x , na , y , nb) , (x , y) => E.Call(M_Intrinsic2 , callee , boxed(x) , boxed(y))) is E g)
+                    return g;
+            }
+            E generic = E.Call(M_Intrinsic2 , callee , boxed(a) , boxed(b));
+            return binary_type(op , ta , tb) is Ty.Bool ? E.Convert(generic , typeof(bool)) : generic;
+        }
+
+        //null일수도 있는 값: 두 값을 임시 변수에 두고, 모두 값이 있으면 그 타입으로 빠르게 계산, 아니면 도우미 (결과는 검사기의 타입으로)
+        static E? guarded(E a , Ty ta , E b , Ty tb , Type want , Func<E , E , E?> fast , Func<E , E , E> slow)
+        {
+            ParameterExpression va = E.Variable(a.Type , "a") , vb = E.Variable(b.Type , "b");
+            E? quick = fast(unwrap(va , ta) , unwrap(vb , tb));
+            if (quick is null)
+                return null;
+            E? has = null;
+            foreach (var (v , t) in new[] { (va , ta) , (vb , tb) })
+            {
+                if (!nullable(t)) continue;
+                E h = has_value(v);
+                has = has is null ? h : E.AndAlso(has , h);
+            }
+            return E.Block(want , new[] { va , vb } ,
+                E.Assign(va , a) ,
+                E.Assign(vb , b) ,
+                E.Condition(has! , conv(quick , want) , conv(slow(va , vb) , want)));
+        }
+        static E unwrap(ParameterExpression v , Ty t) => Nullable.GetUnderlyingType(v.Type) is Type u ? E.Convert(v , u) : v;
+        static E has_value(ParameterExpression v) => Nullable.GetUnderlyingType(v.Type) is not null ? E.Property(v , "HasValue") : E.NotEqual(v , E.Constant(null , v.Type));
+
+        E? binary_fast(Intrinsic op , E callee , E a , Ty ta , E b , Ty tb)
+        {
             if (ta is Ty.Long && tb is Ty.Long)
             {
                 switch (op)
@@ -899,8 +1034,7 @@ public partial class Interpreter
                 if (op is Intrinsic.And) return E.And(a , b);
                 if (op is Intrinsic.Or) return E.Or(a , b);
             }
-            E generic = E.Call(M_Intrinsic2 , callee , boxed(a) , boxed(b));
-            return result is Ty.Bool ? E.Convert(generic , typeof(bool)) : generic;
+            return null;
         }
 
         E truth_of(IrExpr ir)
@@ -933,6 +1067,30 @@ public partial class Interpreter
 
         LabelTarget return_label => current?.Return ?? top_return;
         Type return_type => current is null ? typeof(object) : clr(current.Ret);
+
+        //함수 하나(또는 사실 모드의 인스턴스 하나)의 람다
+        LambdaExpression function_lambda(IrStmt s , Function f , Frame frame)
+        {
+            Function? outer = current;
+            current = f;
+            f.Parameters = new ParameterExpression[f.Arity];
+            for (int k = 0 ; k < f.Arity ; k++)
+                f.Parameters[k] = E.Parameter(clr(f.Params[k]) , "a" + k);
+            Type ret = clr(f.Ret);
+            f.Return = E.Label(ret , "return");
+            E depth = E.Field(E.Constant(counter) , F_Depth);
+            E body = frame_block(frame , s.Body! , null , E.Label(f.Return , ret == typeof(object) ? E.Constant(null , typeof(object)) : E.Default(ret)));
+            //예외는 Jyuno 안에서 잡을수 없고 실행을 시작할 때 깊이를 0으로 되돌리므로, finally 없이 정상 반환에서만 줄임
+            ParameterExpression result = E.Variable(ret , "result");
+            E guarded = E.Block(ret , new[] { result } ,
+                E.IfThen(E.GreaterThanOrEqual(depth , E.Constant(MaxCallDepth)) , fail($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)" , typeof(void))) ,
+                E.PreIncrementAssign(depth) ,
+                E.Assign(result , body) ,
+                E.PreDecrementAssign(depth) ,
+                result);
+            current = outer;
+            return E.Lambda(delegate_type(f) , guarded , "jyuno_" + s.Line , f.Parameters);
+        }
 
         E statement(IrStmt s)
         {
@@ -990,7 +1148,7 @@ public partial class Interpreter
                     breaks[s] = end;
                     ParameterExpression items = E.Variable(typeof(object[]) , "items");
                     ParameterExpression i = E.Variable(typeof(int) , "i");
-                    Frame inner = frames[s];
+                    Frame inner = facts_mode ? inst_frame(s , ctx_key) : frames[s];
                     Slot var = inner.Slots[s.Slot];
                     E body = frame_block(inner , s.Body! , steps => {
                         steps.Add(E.Assign(var.Var! , conv(E.ArrayIndex(items , i) , var.Var!.Type)));
@@ -1004,27 +1162,10 @@ public partial class Interpreter
                 }
                 case IrKind.Func:
                 {
-                    Function f = functions[s];
+                    if (facts_mode)
+                        return facts_function(s);
                     Slot slot = stack[^1].Slots[s.Slot];
-                    Function? outer = current;
-                    current = f;
-                    f.Parameters = new ParameterExpression[f.Arity];
-                    for (int k = 0 ; k < f.Arity ; k++)
-                        f.Parameters[k] = E.Parameter(clr(f.Params[k]) , "a" + k);
-                    Type ret = clr(f.Ret);
-                    f.Return = E.Label(ret , "return");
-                    E depth = E.Field(E.Constant(counter) , F_Depth);
-                    E body = frame_block(frames[s] , s.Body! , null , E.Label(f.Return , ret == typeof(object) ? E.Constant(null , typeof(object)) : E.Default(ret)));
-                    //예외는 Jyuno 안에서 잡을수 없고 실행을 시작할 때 깊이를 0으로 되돌리므로, finally 없이 정상 반환에서만 줄임
-                    ParameterExpression result = E.Variable(ret , "result");
-                    E guarded = E.Block(ret , new[] { result } ,
-                        E.IfThen(E.GreaterThanOrEqual(depth , E.Constant(MaxCallDepth)) , fail($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)" , typeof(void))) ,
-                        E.PreIncrementAssign(depth) ,
-                        E.Assign(result , body) ,
-                        E.PreDecrementAssign(depth) ,
-                        result);
-                    current = outer;
-                    return E.Assign(slot.Var! , E.Lambda(delegate_type(f) , guarded , "jyuno_" + s.Line , f.Parameters));
+                    return E.Assign(slot.Var! , function_lambda(s , functions[s] , frames[s]));
                 }
                 case IrKind.Return:
                 {

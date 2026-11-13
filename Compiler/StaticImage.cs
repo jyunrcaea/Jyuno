@@ -24,7 +24,13 @@ public enum JyunoEngine
     /// <summary>IR → 타입 추론 → 식 트리 → IL (JIT가 있는 런타임)</summary>
     Il,
     /// <summary>같은 식 트리를 .NET 식 트리 인터프리터로 (JIT가 없는 런타임에서의 동작 확인용)</summary>
-    ExpressionInterpreter
+    ExpressionInterpreter,
+    /// <summary>
+    /// IR → 정적 타입 검사기(JyunoTypeChecker)가 증명한 타입 → 식 트리 → IL.
+    /// 함수는 검사기의 인스턴스(인자 타입 조합)마다 따로 만들고, 유니온 중 일부에서만 되는 연산은 그 자리에서 확인.
+    /// 검사가 실패한 프로그램은 Il과 같음
+    /// </summary>
+    IlTyped
 }
 
 public static class JyunoProgramImage
@@ -45,6 +51,9 @@ public static class JyunoProgramImage
     /// <summary>[실험] 실행 방식을 골라서 불러옵니다. IL 컴파일을 할수 없는 프로그램은 클로저 엔진으로 실행합니다. (JyunoProgram.Engine으로 확인)</summary>
     public static JyunoProgram Load(ReadOnlySpan<byte> data , Runtime host , JyunoEngine engine) => Link(Read(data) , host , engine);
 
+    /// <summary>[실험] hostTypes: 호스트 함수/변수의 타입 시그니처 (JyunoTypeChecker.Check와 같은 형식, IlTyped에서 씀)</summary>
+    public static JyunoProgram Load(ReadOnlySpan<byte> data , Runtime host , JyunoEngine engine , IReadOnlyDictionary<string , string>? hostTypes) => Link(Read(data) , host , engine , hostTypes);
+
     /// <summary>(측정/테스트용) 바이너리 없이 바로 빌드하고 연결합니다.</summary>
     public static JyunoProgram Compile(IReadOnlyList<string> lines , Runtime host) => Link(IrBuilder.Build(lines , host) , host);
 
@@ -63,14 +72,23 @@ public static class JyunoProgramImage
         return Interpreter.StaticJit.TryEmitCSharp(Read(image) , image , ns , class_name , out reason);
     }
 
-    internal static JyunoProgram Link(IrProgram program , Runtime host , JyunoEngine engine = JyunoEngine.Closure)
+    /// <summary>[실험] 정적 타입 검사기가 증명한 타입으로 C# 소스를 만듭니다. (검사기가 실패하면 기본 추론, typed로 알려줌)</summary>
+    public static string? EmitCSharp(IReadOnlyList<string> lines , Runtime profile , string ns , string class_name , out string? reason , out bool typed , IReadOnlyDictionary<string , string>? hostTypes = null)
+    {
+        byte[] image = Build(lines , profile);
+        IrProgram program = Read(image);
+        return Interpreter.StaticJit.TryEmitCSharp(program , image , ns , class_name , out reason , JyunoTypeChecker.Facts(program , profile , hostTypes) , out typed);
+    }
+
+    internal static JyunoProgram Link(IrProgram program , Runtime host , JyunoEngine engine = JyunoEngine.Closure , IReadOnlyDictionary<string , string>? hostTypes = null)
     {
         object?[] bound = Bind(program , host);
         if (engine is not JyunoEngine.Closure)
         {
-            Func<object?>? jit = Interpreter.StaticJit.TryCompile(program , bound , engine is JyunoEngine.ExpressionInterpreter , out string? reason);
+            CodegenFacts? facts = engine is JyunoEngine.IlTyped ? JyunoTypeChecker.Facts(program , host , hostTypes) : null;
+            Func<object?>? jit = Interpreter.StaticJit.TryCompile(program , bound , engine is JyunoEngine.ExpressionInterpreter , out string? reason , facts , out bool typed);
             if (jit is not null)
-                return new JyunoProgram(jit) { Engine = engine.ToString() };
+                return new JyunoProgram(jit) { Engine = engine is JyunoEngine.IlTyped && !typed ? "Il" : engine.ToString() };
             return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure (" + reason + ")" };
         }
         return new JyunoProgram(new Interpreter.StaticEngine(program , bound).Compile()) { Engine = "Closure" };
