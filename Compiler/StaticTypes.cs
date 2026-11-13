@@ -20,7 +20,12 @@ public enum TypeCheckLevel
     /// <summary>null까지 모두 추적 (console.readline, int "문자열"의 결과도 null일수 있음)</summary>
     Strict,
     /// <summary>입력/변환 경계(console.readline, int/double 변환, file.read)의 결과는 null이 아니라고 보고, 실행할 때 그 자리에서 확인 (Kotlin의 플랫폼 타입)</summary>
-    Pragmatic
+    Pragmatic,
+    /// <summary>
+    /// 실용 단계 + 유니온 중 하나라도 되는 연산은 통과시키고, 나머지 경우는 실행할 때 그 자리에서 확인 (Erlang Dialyzer의 success typing).
+    /// 어떤 타입으로도 안 되는 연산만 오류
+    /// </summary>
+    Lenient
 }
 
 /// <summary>[실험] 타입 검사 결과 하나</summary>
@@ -60,7 +65,7 @@ public static class JyunoTypeChecker
     /// hosts: 호스트 함수/변수의 타입 시그니처 (예: "text.at" → "(string, int, any...) -> string", 변수는 "string").
     /// 시그니처가 없는 호스트 함수의 결과는 any (어떤 연산에도 쓸수 없음)
     /// </summary>
-    public static TypeCheckResult Check(IReadOnlyList<string> lines , Runtime profile , TypeCheckLevel level = TypeCheckLevel.Strict , IReadOnlyDictionary<string , string>? hosts = null)
+    public static TypeCheckResult Check(IReadOnlyList<string> lines , Runtime profile , TypeCheckLevel level = TypeCheckLevel.Strict , IReadOnlyDictionary<string , string>? hosts = null , bool narrowing = true)
     {
         IrProgram program;
         try
@@ -72,7 +77,7 @@ public static class JyunoTypeChecker
             //제한 모드(삭제, 내장 함수 재정의, 구조체 등)를 지키지 않으면 타입을 정할수 없음
             return new TypeCheckResult(e.Errors.Select(o => new TypeDiagnostic(o.Line , "제한 모드" , o.Message)).ToList() , Array.Empty<TypeDiagnostic>() , Array.Empty<string>() , 0 , 0) { Restricted = true };
         }
-        return new TypeChecker(program , profile , level , hosts).Run();
+        return new TypeChecker(program , profile , level , hosts) { Narrowing = narrowing }.Run();
     }
 
     /// <summary>JyunoWeb 채점 호스트(콘솔 + 예시 함수)의 시그니처</summary>
@@ -396,6 +401,10 @@ sealed class TypeChecker
     static readonly object RootKey = new();
 
     readonly Dictionary<(int, string, string) , TypeDiagnostic> errors = new();
+    //느슨한 단계에서 실행할 때 확인할 곳 (경고)
+    readonly Dictionary<(int, string, string) , TypeDiagnostic> checks = new();
+    /// <summary>조건으로 유니온 타입을 좁힘 (x == null, x != null, if x, &&, ||, ?:)</summary>
+    public bool Narrowing = true;
     readonly Dictionary<string , AType> returns = new(StringComparer.Ordinal);
     readonly Dictionary<string , AType> memo = new(StringComparer.Ordinal);
     readonly HashSet<string> in_progress = new(StringComparer.Ordinal);
@@ -439,6 +448,7 @@ sealed class TypeChecker
             rounds++;
             changed = false;
             errors.Clear();
+            checks.Clear();
             memo.Clear();
             instances = 0;
             foreach (FuncInfo f in functions.Values) f.Instances.Clear();
@@ -464,6 +474,7 @@ sealed class TypeChecker
         foreach (FuncInfo f in functions.Values)
             if (f.Instances.Count is 0)
                 warnings.Add(new TypeDiagnostic(f.Def.Line , "검사 안 함" , $"함수 '{f.Name}'은/는 호출되지 않아서 검사하지 않았습니다."));
+        warnings.AddRange(checks.Values.OrderBy(o => o.Line));
         List<string> types = new();
         foreach (SlotInfo s in root.Slots)
             if (s.IsVar) types.Add($"{s.Name}: {s.Summary}");
@@ -615,13 +626,16 @@ sealed class TypeChecker
     //지금 검사하는 함수 인스턴스 (오류 메시지에 어떤 호출 때문인지 붙임, Crystal의 instantiation 표시)
     string? current_instance;
 
-    void error(int line , string category , string message)
+    //partial: 유니온의 일부 타입에서만 실패 (느슨한 단계에서는 실행할 때 확인하는 경고)
+    void error(int line , string category , string message , bool partial = false)
     {
         if (current_instance is not null)
             message += $" ({current_instance}로 호출할 때)";
+        var target = partial && level is TypeCheckLevel.Lenient ? checks : errors;
+        if (target == checks) category = "실행 중 확인/" + category;
         var key = (line , category , message);
-        if (!errors.ContainsKey(key))
-            errors[key] = new TypeDiagnostic(line , category , message);
+        if (!target.ContainsKey(key))
+            target[key] = new TypeDiagnostic(line , category , message);
     }
 
     //영역에 들어감: 칸은 모두 정의되지 않은 상태
@@ -710,8 +724,9 @@ sealed class TypeChecker
             case IrKind.If:
             {
                 condition(s.Arguments , ref st , ctx , line);
-                State? then = block(s.Body! , st , ctx);
-                State? other = s.Else is null ? st : block(s.Else , st , ctx);
+                var (yes , no) = split(s.Arguments , st , ctx);
+                State? then = yes is null ? null : block(s.Body! , yes , ctx);
+                State? other = s.Else is null ? no : no is null ? null : block(s.Else , no , ctx);
                 return State.Join(then , other);
             }
             case IrKind.While:
@@ -721,11 +736,12 @@ sealed class TypeChecker
                 {
                     State c = head.Clone();
                     condition(s.Arguments , ref c , ctx , line);
-                    State? body = block(s.Body! , c , ctx);
+                    var (yes , no) = split(s.Arguments , c , ctx);
+                    State? body = yes is null ? null : block(s.Body! , yes , ctx);
                     State next = State.Join(State.Join(st , body) , ctx.Continues.GetValueOrDefault(s))!;
                     if (next.SameAs(head) || i > 40)
                     {
-                        return State.Join(c , ctx.Breaks.GetValueOrDefault(s));
+                        return State.Join(no , ctx.Breaks.GetValueOrDefault(s));
                     }
                     head = next;
                 }
@@ -752,12 +768,13 @@ sealed class TypeChecker
                     return null;
                 }
                 AType item = AType.Bottom;
+                bool iterable = args[0].Has(TK.Str) || is_coll(args[0]);
                 foreach (AType one in args[0].Singles())
                 {
                     if (one.Has(TK.Str)) item = item.Union(AType.Str);
                     else if (one.Has(TK.List)) item = item.Union(one.ListElem!);
                     else if (one.Has(TK.Arr)) item = item.Union(one.ArrElem!);
-                    else report(line , "for" , new[] { one } , one.Has(TK.Null) ? "null은 순회할수 없습니다." : $"{one}은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)");
+                    else report(line , "for" , new[] { one } , one.Has(TK.Null) ? "null은 순회할수 없습니다." : $"{one}은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)" , iterable);
                 }
                 FrameInfo inner = frames[s];
                 SlotInfo var = inner.Slots[s.Slot];
@@ -861,6 +878,103 @@ sealed class TypeChecker
         foreach (IrExpr a in args) expr(a , ref st , ctx , line);
     }
 
+    //─────────── 좁히기 (TypeScript의 narrowing, C#의 패턴 매칭과 같은 역할) ───────────
+    //조건이 참일 때와 거짓일 때의 상태 (null이라면 그 쪽으로는 실행되지 않음)
+    (State? Yes, State? No) split(IrExpr[] args , State st , Ctx ctx)
+    {
+        State? yes = st.Clone() , no = st.Clone();
+        if (Narrowing && args.Length is 1)
+            refine(args[0] , ref yes , ref no , ctx);
+        return (yes , no);
+    }
+
+    void refine(IrExpr e , ref State? yes , ref State? no , Ctx ctx)
+    {
+        while (e is IrParen { Closed: true } p) e = p.Inner;
+        State? none = null;
+        switch (e)
+        {
+            case IrConst c:
+                //항상 참/거짓인 조건 (while true 등)
+                if (Parser.IsTrue(c.Value)) no = null; else yes = null;
+                return;
+            case IrRead or IrCall { HasArguments: false } when narrowable(name_of(e)! , yes ?? no , ctx) is SlotInfo s:
+                //if x: 참이라면 x는 null이 아님
+                yes = narrow(yes , s , t => t.Without(TK.Null));
+                //거짓이라면 0, "", false, null 중 하나 (타입은 그대로)
+                return;
+            case IrIntrinsic i when program.Imports[i.Import].Name is "not" && i.Arguments.Length >= 1:
+                refine(i.Arguments[0] , ref no , ref yes , ctx);
+                return;
+            case IrOperator { Symbol: "u!" } u:
+                refine(u.Operands[0] , ref no , ref yes , ctx);
+                return;
+            case IrOperator { Symbol: "&&" } and_op:
+                refine(and_op.Operands[0] , ref yes , ref none , ctx);
+                refine(and_op.Operands[1] , ref yes , ref none , ctx);
+                return;
+            case IrOperator { Symbol: "||" } or_op:
+                refine(or_op.Operands[0] , ref none , ref no , ctx);
+                refine(or_op.Operands[1] , ref none , ref no , ctx);
+                return;
+        }
+        //x == null, x != null, equal x null
+        IrExpr[]? pair = e switch {
+            IrOperator { Symbol: "==" or "!=" } op => op.Operands,
+            IrIntrinsic i when program.Imports[i.Import].Name is "equal" && i.Arguments.Length is 2 => i.Arguments,
+            _ => null
+        };
+        if (pair is null) return;
+        IrExpr a = unparen(pair[0]) , b = unparen(pair[1]);
+        IrName? read = is_null(a) ? name_of(b) : is_null(b) ? name_of(a) : null;
+        if (read is null || narrowable(read , yes ?? no , ctx) is not SlotInfo slot) return;
+        bool negated = e is IrOperator { Symbol: "!=" };
+        ref State? when_null = ref negated ? ref no : ref yes;
+        ref State? not_null = ref negated ? ref yes : ref no;
+        when_null = narrow(when_null , slot , t => t.Has(TK.Null) ? AType.Null : AType.Bottom);
+        not_null = narrow(not_null , slot , t => t.Without(TK.Null));
+    }
+
+    //변수 읽기 (키워드 인자에서는 인자 없는 호출로 만들어짐)
+    static IrName? name_of(IrExpr e) => e switch {
+        IrRead r => r.Name,
+        IrCall { HasArguments: false } c => c.Name,
+        _ => null
+    };
+
+    //null 상수 (전역 상수 null을 가리키는 이름도)
+    bool is_null(IrExpr e) => e is IrConst { Value: null }
+        || (name_of(e) is IrName n && n.Candidates.Length is 0 && n.Import >= 0 && program.Imports[n.Import].Name is "null");
+
+    static IrExpr unparen(IrExpr e)
+    {
+        while (e is IrParen { Closed: true } p) e = p.Inner;
+        return e;
+    }
+
+    //좁힐수 있는 이름: 지금 함수의 칸이고, 다른 함수가 바꾸지 않으며, 반드시 정의된 것
+    SlotInfo? narrowable(IrName name , State? st , Ctx ctx)
+    {
+        if (st is null) return null;
+        foreach (SlotInfo s in slots_of(name))
+        {
+            var (_ , d) = look(s , st , ctx);
+            if (d is Def.No) continue;
+            return d is Def.Yes && own(s , ctx) && !s.Shared && !s.IsFunc ? s : null;
+        }
+        return null;
+    }
+
+    //타입이 남지 않으면 그 쪽으로는 실행되지 않음
+    static State? narrow(State? st , SlotInfo s , Func<AType , AType> f)
+    {
+        if (st is null) return null;
+        AType t = f(st.Get(s));
+        if (t.IsBottom) return null;
+        st.Map[s] = t;
+        return st;
+    }
+
     AType expr(IrExpr e , ref State st , Ctx ctx , int line)
     {
         switch (e)
@@ -926,9 +1040,13 @@ sealed class TypeChecker
             case "&&" or "||":
             {
                 expr(o[0] , ref st , ctx , line);
-                State right = st.Clone();
-                expr(o[1] , ref right , ctx , line);
-                st = State.Join(st , right)!;
+                //&&의 오른쪽은 왼쪽이 참일 때, ||의 오른쪽은 거짓일 때만 계산 (그 상태로 좁힘)
+                var (yes , no) = split(new[] { o[0] } , st , ctx);
+                State? right = op.Symbol is "&&" ? yes : no;
+                State? skipped = op.Symbol is "&&" ? no : yes;
+                if (right is not null)
+                    expr(o[1] , ref right , ctx , line);
+                st = State.Join(right , skipped) ?? st;
                 return AType.Bool;
             }
             case "??":
@@ -944,10 +1062,11 @@ sealed class TypeChecker
             case "?:":
             {
                 expr(o[0] , ref st , ctx , line);
-                State a = st.Clone() , b = st.Clone();
-                AType t = expr(o[1] , ref a , ctx , line);
-                AType f = expr(o[2] , ref b , ctx , line);
-                st = State.Join(a , b)!;
+                var (a , b) = split(new[] { o[0] } , st , ctx);
+                AType t = AType.Bottom , f = AType.Bottom;
+                if (a is not null) t = expr(o[1] , ref a , ctx , line);
+                if (b is not null) f = expr(o[2] , ref b , ctx , line);
+                st = State.Join(a , b) ?? st;
                 return t.Union(f);
             }
         }
@@ -967,26 +1086,27 @@ sealed class TypeChecker
                 return AType.Bool;
             case "<" or ">" or "<=" or ">=":
                 //less/greater와 같이 크기를 비교할수 없는 값이면 오류 (Values.Compare)
+                bool some = args[0].Singles().Any(x => args[1].Singles().Any(y => ordered(new[] { x , y }).Item2 is null));
                 foreach (AType x in args[0].Singles())
                     foreach (AType y in args[1].Singles())
                         if (ordered(new[] { x , y }) is (null , string message))
-                            report(line , op.Symbol , new[] { x , y } , message);
+                            report(line , op.Symbol , new[] { x , y } , message , some);
                 return AType.Bool;
             case "^":
                 return args[0].SubsetOf(AType.Int) && args[1].SubsetOf(AType.Int) ? AType.Int
                     : !args[0].Has(TK.Int) || !args[1].Has(TK.Int) ? AType.Bool : AType.Int.Union(AType.Bool);
             case "<<" or ">>":
                 if (!args[0].SubsetOf(AType.Int) || !args[1].SubsetOf(AType.Int))
-                    report(line , op.Symbol , args , $"'{op.Symbol}' 연산은 정수끼리만 할수 있습니다. ({args[0]}, {args[1]})");
+                    report(line , op.Symbol , args , $"'{op.Symbol}' 연산은 정수끼리만 할수 있습니다. ({args[0]}, {args[1]})" , args[0].Has(TK.Int) && args[1].Has(TK.Int));
                 return AType.Int;
             case "u~":
                 if (!args[0].SubsetOf(AType.Int))
-                    report(line , "~" , args , $"'~' 연산은 정수에만 할수 있습니다. ({args[0]})");
+                    report(line , "~" , args , $"'~' 연산은 정수에만 할수 있습니다. ({args[0]})" , args[0].Has(TK.Int));
                 return AType.Int;
             case "u-" or "u+":
             {
                 if (!args[0].SubsetOf(Number))
-                    report(line , op.Symbol[1..] , args , $"'{op.Symbol[1..]}' 연산은 숫자에만 할수 있습니다. ({args[0]})");
+                    report(line , op.Symbol[1..] , args , $"'{op.Symbol[1..]}' 연산은 숫자에만 할수 있습니다. ({args[0]})" , num(args[0]));
                 AType r = AType.Bottom;
                 if (args[0].Has(TK.Int)) r = r.Union(AType.Int);
                 if (args[0].Has(TK.Real)) r = r.Union(AType.Real);
@@ -1028,7 +1148,7 @@ sealed class TypeChecker
         }
         if (name.Import >= 0)
             return result.Union(global_value(name.Import , line));
-        error(line , "정의" , maybe ? $"'{name.Name}'이/가 정의되지 않았을수 있습니다." : $"'{name.Name}'은/는 알수없는 변수/함수 입니다.");
+        error(line , "정의" , maybe ? $"'{name.Name}'이/가 정의되지 않았을수 있습니다." : $"'{name.Name}'은/는 알수없는 변수/함수 입니다." , partial: maybe);
         return result;
     }
 
@@ -1105,7 +1225,7 @@ sealed class TypeChecker
             if (slots.Length > 1 || call.Name.Import >= 0) throw new Unsupported($"함수 '{call.Name.Name}'의 후보가 여러 개");
             var (_ , d) = look(fslot , st , ctx);
             if (d is not Def.Yes)
-                error(line , "정의" , d is Def.No ? $"함수 '{call.Name.Name}'이/가 아직 정의되지 않았습니다." : $"함수 '{call.Name.Name}'이/가 정의되지 않았을수 있습니다.");
+                error(line , "정의" , d is Def.No ? $"함수 '{call.Name.Name}'이/가 아직 정의되지 않았습니다." : $"함수 '{call.Name.Name}'이/가 정의되지 않았을수 있습니다." , partial: d is Def.Maybe);
             FuncInfo f = fslot.Func!;
             AType[] args = new AType[Math.Max(f.Arity , call.Arguments.Length)];
             for (int i = 0 ; i < call.Arguments.Length ; i++) args[i] = expr(call.Arguments[i] , ref st , ctx , line);
@@ -1140,7 +1260,7 @@ sealed class TypeChecker
                 return result.Union(builtin(im.Name , arguments(ref st) , line));
             return result.Union(value_call(global_value(call.Name.Import , line) , call , arguments(ref st) , line));
         }
-        error(line , "정의" , maybe ? $"'{call.Name.Name}'이/가 정의되지 않았을수 있습니다." : call.Missing);
+        error(line , "정의" , maybe ? $"'{call.Name.Name}'이/가 정의되지 않았을수 있습니다." : call.Missing , partial: maybe);
         arguments(ref st);
         return result;
     }
@@ -1151,13 +1271,14 @@ sealed class TypeChecker
         if (!call.HasArguments)
             return value;
         AType result = AType.Bottom;
+        bool indexable = is_coll(value);
         foreach (AType one in value.Singles())
         {
             AType? elem = one.Has(TK.List) ? one.ListElem : one.Has(TK.Arr) ? one.ArrElem : null;
             TK clr = one.Has(TK.List) ? one.ListClr : one.ArrClr;
             if (elem is null)
             {
-                report(line , call.Name.Name , new[] { one } , one.Has(TK.Any) ? $"'{call.Name.Name}'의 타입을 알수 없어서 인덱스로 쓸수 있는지 모릅니다." : $"'{call.Name.Name}'({one})은/는 배열/리스트가 아니라서 인자를 줄수 없습니다.");
+                report(line , call.Name.Name , new[] { one } , one.Has(TK.Any) ? $"'{call.Name.Name}'의 타입을 알수 없어서 인덱스로 쓸수 있는지 모릅니다." : $"'{call.Name.Name}'({one})은/는 배열/리스트가 아니라서 인자를 줄수 없습니다." , indexable);
                 continue;
             }
             if (args.Length is 0 or > 2)
@@ -1166,7 +1287,7 @@ sealed class TypeChecker
                 continue;
             }
             if (!args[0].SubsetOf(AType.Int))
-                report(line , call.Name.Name , new[] { args[0] } , $"인덱스는 int여야 합니다. ({args[0]})");
+                report(line , call.Name.Name , new[] { args[0] } , $"인덱스는 int여야 합니다. ({args[0]})" , args[0].Has(TK.Int));
             if (args.Length is 1)
             {
                 result = result.Union(elem);
@@ -1174,7 +1295,7 @@ sealed class TypeChecker
             }
             AType v = args[1];
             if (fits_into(one , v) is string message)
-                report(line , call.Name.Name , new[] { v } , message);
+                report(line , call.Name.Name , new[] { v } , message , v.Singles().Any(x => fits_into(one , x) is null));
             result = result.Union(AType.Null);
         }
         return result;
@@ -1251,10 +1372,10 @@ sealed class TypeChecker
     //─────────── 3. 내장 함수 ───────────
 
     //연산 실패 보고 (어떤 타입 때문인지에 따라 분류)
-    void report(int line , string name , AType[] combo , string message)
+    void report(int line , string name , AType[] combo , string message , bool partial = false)
     {
         string category = combo.Any(o => o.Has(TK.Any)) ? "any" : combo.Any(o => o.Has(TK.Null)) ? "null" : "타입";
-        error(line , category , $"{name}: {message}");
+        error(line , category , $"{name}: {message}" , partial);
     }
 
     static readonly AType Number = AType.Int.Union(AType.Real);
@@ -1294,14 +1415,16 @@ sealed class TypeChecker
         AType result = AType.Bottom;
         var rule = builtins[name];
         bool any_arg = args.Any(o => o.Has(TK.Any));
-        foreach (AType[] combo in combos)
+        var outcomes = combos.Select(combo => (combo, rule(this , combo))).ToList();
+        //유니온 중 하나라도 되는 조합이 있으면 (느슨한 단계에서는) 실행 중 확인
+        bool partial = outcomes.Any(o => o.Item2.Error is null);
+        foreach (var (combo , (t , err)) in outcomes)
         {
-            var (t , err) = rule(this , combo);
             if (err is not null)
             {
                 string shown = string.Join(", " , combo.Select(o => o.ToString()));
                 string category = any_arg ? "any" : combo.Any(o => o.Has(TK.Null)) && err.Contains("null") ? "null" : err.StartsWith("인자") ? "인자 수" : "타입";
-                error(line , category , $"{name} ({shown}): {err}");
+                error(line , category , $"{name} ({shown}): {err}" , partial);
             }
             if (t is not null) result = result.Union(t);
         }
@@ -1317,7 +1440,7 @@ sealed class TypeChecker
             {
                 AType p = i < o.Params.Length ? o.Params[i] : o.Rest!;
                 if (!args[i].SubsetOf(p))
-                    report(line , name , new[] { args[i] } , $"{i + 1}번째 인자는 {p}여야 합니다. ({args[i]})");
+                    report(line , name , new[] { args[i] } , $"{i + 1}번째 인자는 {p}여야 합니다. ({args[i]})" , (args[i].Kinds & p.Kinds) != 0);
             }
             return o.Platform && level is TypeCheckLevel.Strict ? o.Result.Union(AType.Null) : o.Result;
         }

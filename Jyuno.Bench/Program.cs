@@ -420,8 +420,12 @@ static class Program
                         programs.Add(($"F{index++:D5}" , JsonSerializer.Deserialize<string>(json)!.Split('\n') , new[] { "" }));
                 }
                 bool verbose = Environment.GetEnvironmentVariable("TYPECHECK_VERBOSE") is "1";
-                foreach (TypeCheckLevel level in new[] { TypeCheckLevel.Strict , TypeCheckLevel.Pragmatic })
+                //TYPECHECK_LEVELS=strict-nonarrow,strict,pragmatic,lenient (기본: strict,pragmatic)
+                foreach (string level_name in (Environment.GetEnvironmentVariable("TYPECHECK_LEVELS") ?? "strict,pragmatic").Split(','))
                 {
+                    bool narrowing = !level_name.EndsWith("-nonarrow");
+                    TypeCheckLevel level = Enum.Parse<TypeCheckLevel>(level_name.Replace("-nonarrow" , "") , ignoreCase: true);
+                    int partial_checks = 0;
                     int accepted = 0 , rejected = 0 , restricted = 0 , runs = 0;
                     var categories = new Dictionary<string , int>();   //거부된 프로그램의 첫 오류 분류
                     var messages = new Dictionary<string , int>();
@@ -435,7 +439,8 @@ static class Program
                     {
                         TypeCheckResult result;
                         long t = Stopwatch.GetTimestamp();
-                        result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , Hosts);
+                        result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , Hosts , narrowing);
+                        if (result.Success) partial_checks += result.Warnings.Count(o => o.Category.StartsWith("실행 중 확인"));
                         if (result.Restricted)
                         {
                             restricted++;
@@ -480,7 +485,8 @@ static class Program
                         }
                     }
                     int checkedn = accepted + rejected;
-                    Console.WriteLine($"[{level}] 프로그램 {programs.Count}개: 제한 모드 거부 {restricted}, 검사 {checkedn} → 통과 {accepted} ({100.0 * accepted / Math.Max(1 , checkedn):F1}%), 거부 {rejected}, 경고 있음 {warn}");
+                    Console.WriteLine($"[{level_name}] 프로그램 {programs.Count}개: 제한 모드 거부 {restricted}, 검사 {checkedn} → 통과 {accepted} ({100.0 * accepted / Math.Max(1 , checkedn):F1}%), 거부 {rejected}, 경고 있음 {warn}");
+                    if (level is TypeCheckLevel.Lenient) Console.WriteLine($"  통과한 프로그램에 넣을 실행 중 확인: {partial_checks}곳");
                     Console.WriteLine($"  검사 시간 평균 {total_ms / Math.Max(1 , checkedn):F2} ms, 최대 {max_ms:F1} ms");
                     Console.WriteLine($"  통과했는데 실행 중 오류: {(unsound.Count is 0 ? "없음" : string.Join(", " , unsound.Select(o => $"{o.Key} {o.Value}")))}");
                     Console.WriteLine($"  거부된 프로그램을 실제로 실행하면: {string.Join(", " , rejected_runtime.OrderByDescending(o => o.Value).Select(o => $"{o.Key} {o.Value}"))}");
