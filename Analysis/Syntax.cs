@@ -93,6 +93,52 @@ public sealed class UnclosedParenthesisExpression : Expression
     public Expression Inner { get; }
 }
 
+/// <summary>이항 연산자 식 (a + b, a == b, a &amp;&amp; b 등, 1.6.0부터). 함수 호출은 연산자보다 먼저 묶임</summary>
+public sealed class BinaryExpression : Expression
+{
+    internal BinaryExpression(string op , Expression left , Expression right) { Operator = op; Left = left; Right = right; }
+    /// <summary>연산자 기호 (+, -, *, /, %, &lt;&lt;, &gt;&gt;, &lt;, &gt;, &lt;=, &gt;=, ==, !=, &amp;, ^, |, &amp;&amp;, ||, ??)</summary>
+    public string Operator { get; }
+    public Expression Left { get; }
+    public Expression Right { get; }
+    /// <summary>오른쪽 식을 필요할 때만 계산하는지 (&amp;&amp;, ||, ??)</summary>
+    public bool IsShortCircuit => Operator is "&&" or "||" or "??";
+}
+
+/// <summary>단항 연산자 식 (-a, +a, !a, ~a, 1.6.0부터)</summary>
+public sealed class UnaryExpression : Expression
+{
+    internal UnaryExpression(string op , Expression operand) { Operator = op; Operand = operand; }
+    public string Operator { get; }
+    public Expression Operand { get; }
+}
+
+/// <summary>조건 연산자 식 (조건 ? 참일때 : 거짓일때, 1.6.0부터)</summary>
+public sealed class ConditionalExpression : Expression
+{
+    internal ConditionalExpression(Expression condition , Expression when_true , Expression when_false) { Condition = condition; WhenTrue = when_true; WhenFalse = when_false; }
+    public Expression Condition { get; }
+    public Expression WhenTrue { get; }
+    public Expression WhenFalse { get; }
+}
+
+/// <summary>(이름) (연산자)= (값): 복합 대입 (x += 1은 x = x + 1, 1.6.0부터)</summary>
+public sealed class CompoundAssignExpression : Expression
+{
+    internal CompoundAssignExpression(string name , string op , Expression value) { Name = name; Operator = op; Value = value; }
+    public string Name { get; }
+    /// <summary>계산할 이항 연산자 (x += 1이라면 +)</summary>
+    public string Operator { get; }
+    public Expression Value { get; }
+}
+
+/// <summary>연산자를 잘못 쓴 식 (실행하면 Message 오류, 1.6.0부터)</summary>
+public sealed class SyntaxErrorExpression : Expression
+{
+    internal SyntaxErrorExpression(string message) { Message = message; }
+    public string Message { get; }
+}
+
 /// <summary>처리할수 없는 식 (식 맨 앞의 키워드 등, 실행하면 '처리할수 없습니다.' 오류)</summary>
 public sealed class InvalidExpression : Expression
 {
@@ -140,7 +186,7 @@ public class Statement
     public Scope Scope { get; internal set; } = null!;
     /// <summary>이 문장이 들어있는 함수 (최상위라면 null)</summary>
     public FunctionStatement? Function => Parent.Function;
-    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat는 키워드 다음부터, for는 이름 다음부터)</summary>
+    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat는 키워드 다음부터, for는 이름 다음부터, 1.6.0부터 인자 하나하나가 식이며 이름 다음에 값이 있다면 함수 호출)</summary>
     public IReadOnlyList<Expression> Arguments { get; internal set; } = Array.Empty<Expression>();
 }
 
@@ -201,8 +247,10 @@ public sealed class FunctionStatement : BlockStatement
     internal FunctionStatement(int line , StatementKind kind = StatementKind.Func) : base(kind , line) { }
     /// <summary>struct로 만든 구조체인지</summary>
     public bool IsStruct => Kind is StatementKind.Struct;
-    /// <summary>함수(또는 구조체) 이름 (형식이 잘못되었다면 null)</summary>
+    /// <summary>함수(또는 구조체) 이름 (형식이 잘못되었거나 연산자 함수라면 null)</summary>
     public string? Name { get; internal set; }
+    /// <summary>구조체 안에서 연산자를 다시 정의하는 함수(func +)라면 그 연산자 기호 (1.6.0부터)</summary>
+    public string? Operator { get; internal set; }
     public int ParameterCount { get; internal set; }
     public Block Body { get; internal set; } = null!;
     /// <summary>호출 한번마다 새로 만들어지는 영역 (구조체라면 구조체 값 하나의 영역)</summary>

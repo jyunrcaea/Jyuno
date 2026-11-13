@@ -1,0 +1,7 @@
+struct pp
+  param x
+endstruct
+a = pp 1
+console.writeline (host.show (a == (pp 1)) (a != (pp 2)) (equal a (pp 1)))
+console.writeline (host.show (host.show (a ?? 3) (null ?? a)))
+b = a + a

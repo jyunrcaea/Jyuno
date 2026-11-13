@@ -1,0 +1,32 @@
+struct vec
+  param x
+  param y
+  func +
+    param o
+    return vec (x + o.x) (y + o.y)
+  endfunc
+  func -
+    param o
+    return o == null ? vec (-x) (-y) : vec (x - o.x) (y - o.y)
+  endfunc
+endstruct
+struct seg
+  param from
+  param to
+  func len
+    d = to - from
+    return d.x * d.x + d.y * d.y
+  endfunc
+  func +
+    param o
+    return seg (from + o) (to + o)
+  endfunc
+endstruct
+s = seg (vec 0 0) (vec 3 4)
+t = s + (vec 1 1)
+console.writeline (host.show s t (s.len) (t.len) (-s.to) (s.from - s.to))
+s.to += vec 1 1
+console.writeline (host.show s s.to s.to.x)
+arr = array (vec 1 1) (vec 2 2)
+arr 0 ((arr 0) + (arr 1))
+console.writeline (host.show arr)

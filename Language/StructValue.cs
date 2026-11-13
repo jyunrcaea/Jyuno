@@ -18,6 +18,13 @@ public abstract class StructValue
     /// <summary>필드의 값을 읽습니다. 필드가 없다면 KeyNotFoundException이 발생합니다.</summary>
     public object? this[string name] => TryGetField(name , out object? value) ? value : throw new KeyNotFoundException($"구조체 '{TypeName}'에 '{name}' 필드가 없습니다.");
 
+    //구조체가 연산자(func +, func == 등)를 다시 정의했다면 그 구조체 함수를 호출 (add, equal 등 내장 함수에서 사용, 1.6.0부터)
+    internal virtual bool TryOperator(string symbol , object?[] args , out object? result)
+    {
+        result = null;
+        return false;
+    }
+
     /// <summary>C#의 record처럼 '이름 { 필드 = 값, ... }' 형식의 문자열</summary>
     public override string ToString()
     {

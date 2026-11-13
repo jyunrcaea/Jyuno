@@ -13,7 +13,7 @@ public enum TokenType
     /// </summary>
     Constant,
     /// <summary>
-    /// 연산자 (+,*,=, > 등)
+    /// 기호 ('(', ')', '=', ':' 등, 값은 char)
     /// </summary>
     Prefix,
     /// <summary>
@@ -27,5 +27,10 @@ public enum TokenType
     /// <summary>
     /// 오류
     /// </summary>
-    Error
+    Error,
+    /// <summary>
+    /// 연산자 (+, ==, &amp;&amp;, += 등, 값은 기호 문자열, 1.6.0부터)
+    /// 이름이 아니므로 변수/함수처럼 대입하거나 삭제할수 없음
+    /// </summary>
+    Operator
 }

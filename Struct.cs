@@ -23,6 +23,7 @@ public partial class Interpreter
             HasInnerStruct = has_inner_struct;
         }
         readonly Interpreter interpreter;
+        public Interpreter Interpreter => interpreter;
         public readonly string Name;
         public readonly int Line, End;
         //구조체를 만든 영역 (생성자와 구조체 함수에서 읽을수 있는 바깥 변수)
@@ -150,11 +151,17 @@ public partial class Interpreter
                 }
                 return true;
             }
+            //==를 다시 정의한 구조체 값은 복사본인지와 관계없이 그 결과 (Values.Same과 같음, 연산자 함수는 복사본에서 실행됨)
+            if (a is StructInstance overloaded && overload(overloaded , "==") is not null)
+                return Values.Same(a , b);
             if ((copy_a || copy_b) && a is StructInstance s && b is StructInstance t)
                 return Same(s , copy_a , t , copy_b);
             return Values.Same(a , b);
         }
         public override int GetHashCode() => Type.Line;
+
+        //연산자를 다시 정의한 구조체 함수 (add 등 내장 함수에서 호출, 인자와 반환값은 C# 함수를 호출할 때처럼 인터프리터 밖의 값)
+        internal override bool TryOperator(string symbol , object?[] args , out object? result) => Type.Interpreter.try_overload(this , symbol , args , out result);
     }
 
     //구조체를 호출: 새 영역에서 생성자(struct와 endstruct 사이)를 실행하고 구조체 값을 만듦

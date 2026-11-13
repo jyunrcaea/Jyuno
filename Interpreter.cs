@@ -485,8 +485,17 @@ public partial class Interpreter : IDisposable
                 break;
             //함수 정의: 이름에 함수를 저장하고 endfunc 다음 줄로 건너뛰기
             case KeywordType.Func:
-                if (tokens.Length != 2 || tokens[1].type is not TokenType.Name)
+                if (tokens.Length != 2 || tokens[1].type is not (TokenType.Name or TokenType.Operator))
                     throw new JyunoException("func 다음에는 함수 이름 하나만 와야 합니다.");
+                //func (연산자): 구조체의 연산자 다시 정의 (구조체 생성자 안에서만, 1.6.0부터)
+                if (tokens[1].type is TokenType.Operator)
+                {
+                    string symbol = (string)tokens[1].value;
+                    if (!Grammar.IsOverloadable(symbol))
+                        throw new JyunoException($"연산자 '{symbol}'은/는 다시 정의할수 없습니다.");
+                    if (map.Owner[line] < 0 || keyword_of(map.Owner[line]) is not KeywordType.Struct)
+                        throw new JyunoException($"연산자 '{symbol}'은/는 구조체(struct) 안에서만 다시 정의할수 있습니다.");
+                }
                 substitute_variable((string)tokens[1].value , new JyunoFunction(this , line , map.Pair[line] , current));
                 jump(map.Pair[line] + 1);
                 break;
@@ -746,15 +755,28 @@ public partial class Interpreter : IDisposable
             declare_variable(name , arg);
         }
     }
-    //return 식을 파라미터를 인자로 바로 읽도록 컴파일 (대입/레이블/삭제/상수 선언이 있다면 함수 영역에 이름이 생기므로 인라인하지 않음)
+    //return 식을 파라미터를 인자로 바로 읽도록 컴파일 (대입/복합 대입/레이블/삭제/상수 선언이 있다면 함수 영역에 이름이 생기므로 인라인하지 않음)
     Func<object?>? compile_direct(InlineShape shape)
     {
         Token[] tokens = scripts[shape.Return].tokens;
+        //':'는 조건 연산자(a ? b : c)의 일부일수도 있으므로 '?'보다 많을 때만 레이블
+        int questions = 0, colons = 0;
         foreach (Token token in tokens)
         {
-            if (token.type is TokenType.Prefix && token.value is '=' or ':')
+            if (token.type is TokenType.Prefix && token.value is '=')
                 return null;
+            if (token.type is TokenType.Prefix && token.value is ':')
+                colons++;
+            if (token.type is TokenType.Operator && (string)token.value is string symbol)
+            {
+                if (Grammar.CompoundAssignment(symbol) is not null)
+                    return null;
+                if (symbol is "?")
+                    questions++;
+            }
         }
+        if (colons > questions)
+            return null;
         //파라미터 이름이 겹치거나 '.'이 있다면 구조체 파라미터의 멤버 이름과 서로 덮어쓸수 있으므로 인라인하지 않음
         Dictionary<string , int> parameters = new();
         foreach (var (_ , index , name) in shape.Params)
@@ -766,7 +788,7 @@ public partial class Interpreter : IDisposable
         inline_rejected = false;
         try
         {
-            Expr[] arguments = compile_arguments(tokens , 1 , out _);
+            Expr[] arguments = compile_keyword_arguments(tokens , 1);
             if (inline_rejected)
                 return null;
             if (arguments.Length is 0)

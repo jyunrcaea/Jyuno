@@ -1,0 +1,30 @@
+struct flag
+  param on
+  func !
+    return flag (!on)
+  endfunc
+  func ~
+    return flag (on ? 0 : 1)
+  endfunc
+  func &
+    param o
+    return flag (on && o.on)
+  endfunc
+  func |
+    param o
+    return flag (on || o.on)
+  endfunc
+  func ^
+    param o
+    return flag (on ^ o.on)
+  endfunc
+endstruct
+t = flag true
+f = flag false
+console.writeline (host.show (host.show (!t) (~t) (t & f) (t | f) (t ^ t) (not t) (and t f t) (or f f t)))
+console.writeline (host.show (t && f) (f || t) (f ?? t) (null ?? f))
+s = flag 1
+s &= t
+s |= f
+s ^= t
+console.writeline (host.show s)
