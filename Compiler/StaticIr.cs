@@ -116,7 +116,7 @@ internal class IrStmt
     public int Slot = -1; //For: 변수 칸(반복 영역), Func/Param/Local: 지금 영역의 칸
     public int FrameSize; //For/Func: 새 영역의 칸 수
     public int ParameterIndex;
-    public string? Name; //Local: 오류 메시지용
+    public string? Name; //Local, Func: 오류 메시지용
     public IrBlock? Body, Else;
     public IrStmt? Loop; //Break
     public IrTarget[] Targets = Array.Empty<IrTarget>(); //Goto
@@ -316,6 +316,7 @@ internal sealed class IrBuilder
                     return ir;
                 }
                 ir.Slot = slot_of(scope , function.Name);
+                ir.Name = function.Name;
                 ir.FrameSize = function.InnerScope.Names.Count;
                 ir.Body = block(function.Body , ir);
                 return ir;

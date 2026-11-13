@@ -15,6 +15,7 @@ using System.Text.Json;
 //  emitcs <출력 폴더> bench <폴더> | fuzz <jsonl> <개수>   C# 소스로 내보내기 (AotGen 프로젝트에서 빌드)
 //  interp-dump <jsonl> <개수> <출력>   인터프리터 결과만 기록 (AOT 빌드와 비교용)
 //  phases-build <소스>   빌드 단계별 시간 (분석 / 제한 모드 검사 / 전체)
+//  typecheck judge <풀이 폴더> | files <폴더> | fuzz <jsonl> <개수>   정적 타입 검사 통과율과 건전성 (통과한 프로그램이 타입 오류로 멈추는지)
 static class Program
 {
     sealed class Sink : IConsoleSink
@@ -87,6 +88,19 @@ static class Program
             else { il_fallback++; fallback_reasons[program.Engine] = fallback_reasons.GetValueOrDefault(program.Engine) + 1; }
         }
         return Execute(program.Run , sink);
+    }
+
+    //실행 중 오류의 분류: 타입 검사가 막아야 하는 오류(타입/null/정의)와 값에 따른 오류(0으로 나누기, 인덱스 범위 등)
+    static string? RuntimeClass(string? error)
+    {
+        if (error is null) return null;
+        string[] null_like = { "null" , "NullReference" };
+        string[] type_like = { "RuntimeBinder" , "InvalidCast" , "정의되지 않" , "알수없는 변수" , "존재하지 않는" , "뺄셈" , "크기를 비교" , "반복할 횟수" , "인덱스는 정수" , "순회할수 없습니다" , "넣을수 없습니다" , "숫자가 아닙니다" , "길이를 구할수 없습니다" , "함수 또는 변수가 아닙니다" , "괄호" , "인자" , "누락" , "더할수" , "곱할" , "나눌수" , "형식 문자열은" , "변환" };
+        string[] value_like = { "0으로 나눌수" , "범위" , "호출 깊이" , "너무 많습니다" , "형식" , "goto" };
+        if (value_like.Any(error.Contains)) return "값";
+        if (null_like.Any(error.Contains)) return "null";
+        if (type_like.Any(error.Contains)) return "타입";
+        return "값";
     }
 
     static int Main(string[] args)
@@ -373,6 +387,119 @@ static class Program
                     output.WriteLine(JsonSerializer.Serialize(new[] { $"F{index++:D5}" , o.Output , o.Result , o.Error ?? "" }));
                 }
                 return 0;
+            }
+            case "typecheck":
+            {
+                //typecheck judge <풀이 폴더> | files <폴더> | fuzz <jsonl> <개수>
+                var programs = new List<(string Name, string[] Lines, string[] Inputs)>();
+                if (args[1] is "judge")
+                {
+                    foreach (Problem problem in Problems.All)
+                    {
+                        string path = Path.Combine(args[2] , $"{problem.Id}.jyuno");
+                        if (File.Exists(path))
+                            programs.Add((problem.Id.ToString() , File.ReadAllText(path).Replace("\r\n" , "\n").Split('\n') , problem.AllCases.Select(o => o.Input).ToArray()));
+                    }
+                }
+                else if (args[1] is "files")
+                {
+                    foreach (string path in Directory.GetFiles(args[2] , "*.jyuno").OrderBy(o => o))
+                        programs.Add((Path.GetFileNameWithoutExtension(path) , File.ReadAllText(path).Replace("\r\n" , "\n").Split('\n') , new[] { "" }));
+                }
+                else
+                {
+                    int index = 0;
+                    foreach (string json in File.ReadLines(args[2]).Take(int.Parse(args[3])))
+                        programs.Add(($"F{index++:D5}" , JsonSerializer.Deserialize<string>(json)!.Split('\n') , new[] { "" }));
+                }
+                bool verbose = Environment.GetEnvironmentVariable("TYPECHECK_VERBOSE") is "1";
+                foreach (TypeCheckLevel level in new[] { TypeCheckLevel.Strict , TypeCheckLevel.Pragmatic })
+                {
+                    int accepted = 0 , rejected = 0 , restricted = 0 , runs = 0;
+                    var categories = new Dictionary<string , int>();   //거부된 프로그램의 첫 오류 분류
+                    var messages = new Dictionary<string , int>();
+                    var unsound = new Dictionary<string , int>();      //통과했는데 실행 중 타입/null 오류
+                    var rejected_runtime = new Dictionary<string , int>(); //거부된 프로그램이 실제로 실행하면
+                    var false_alarm = new Dictionary<string , int>(); //거부했는데 실행하면 타입/null 오류가 없던 프로그램의 첫 오류
+                    var warn = 0;
+                    double total_ms = 0 , max_ms = 0;
+                    var examples = new List<string>();
+                    foreach (var (name , lines , inputs) in programs)
+                    {
+                        TypeCheckResult result;
+                        long t = Stopwatch.GetTimestamp();
+                        try
+                        {
+                            result = JyunoTypeChecker.Check(lines , Host("" , out _) , level , JyunoTypeChecker.JyunoWebHost);
+                        }
+                        catch (JyunoBuildException)
+                        {
+                            restricted++;
+                            continue;
+                        }
+                        double ms = (Stopwatch.GetTimestamp() - t) * 1000.0 / Stopwatch.Frequency;
+                        total_ms += ms;
+                        max_ms = Math.Max(max_ms , ms);
+                        if (result.Warnings.Count > 0) warn++;
+                        string? worst = null;
+                        foreach (string input in inputs)
+                        {
+                            Outcome o = Interpret(lines , input);
+                            runs++;
+                            string? c = RuntimeClass(o.Error);
+                            if (c is "타입" or "null") { worst = c + ": " + o.Error; break; }
+                        }
+                        if (result.Success)
+                        {
+                            accepted++;
+                            if (worst is not null)
+                            {
+                                string k = worst.Split(':')[0];
+                                unsound[k] = unsound.GetValueOrDefault(k) + 1;
+                                if (unsound.Values.Sum() <= 6)
+                                    examples.Add($"── 통과했는데 실행 오류 ({level}) {name}\n{string.Join("\n" , lines.Select((l , i) => $"{i + 1,3}| {l}"))}\n  => {worst}");
+                            }
+                        }
+                        else
+                        {
+                            rejected++;
+                            TypeDiagnostic first = result.Errors[0];
+                            categories[first.Category] = categories.GetValueOrDefault(first.Category) + 1;
+                            string m = System.Text.RegularExpressions.Regex.Replace(first.Message , "'[^']*'" , "'_'");
+                            messages[m] = messages.GetValueOrDefault(m) + 1;
+                            string k = worst?.Split(':')[0] ?? "오류 없음";
+                            rejected_runtime[k] = rejected_runtime.GetValueOrDefault(k) + 1;
+                            if (worst is null) false_alarm[$"[{first.Category}] {m}"] = false_alarm.GetValueOrDefault($"[{first.Category}] {m}") + 1;
+                            if (verbose) Console.WriteLine($"  {name} [{level}] {string.Join(" / " , result.Errors.Take(3))}");
+                        }
+                    }
+                    int checkedn = accepted + rejected;
+                    Console.WriteLine($"[{level}] 프로그램 {programs.Count}개: 제한 모드 거부 {restricted}, 검사 {checkedn} → 통과 {accepted} ({100.0 * accepted / Math.Max(1 , checkedn):F1}%), 거부 {rejected}, 경고 있음 {warn}");
+                    Console.WriteLine($"  검사 시간 평균 {total_ms / Math.Max(1 , checkedn):F2} ms, 최대 {max_ms:F1} ms");
+                    Console.WriteLine($"  통과했는데 실행 중 오류: {(unsound.Count is 0 ? "없음" : string.Join(", " , unsound.Select(o => $"{o.Key} {o.Value}")))}");
+                    Console.WriteLine($"  거부된 프로그램을 실제로 실행하면: {string.Join(", " , rejected_runtime.OrderByDescending(o => o.Value).Select(o => $"{o.Key} {o.Value}"))}");
+                    Console.WriteLine($"  거부 분류: {string.Join(", " , categories.OrderByDescending(o => o.Value).Select(o => $"{o.Key} {o.Value}"))}");
+                    foreach (var (m , n) in messages.OrderByDescending(o => o.Value).Take(12))
+                        Console.WriteLine($"    {n,5}  {m}");
+                    Console.WriteLine("  실행하면 문제 없던 거부 (첫 오류):");
+                    foreach (var (m , n) in false_alarm.OrderByDescending(o => o.Value).Take(10))
+                        Console.WriteLine($"    {n,5}  {m}");
+                    foreach (string e in examples.Take(int.Parse(Environment.GetEnvironmentVariable("TYPECHECK_EXAMPLES") ?? "2"))) Console.WriteLine(e);
+                }
+                return 0;
+            }
+            case "typeshow":
+            {
+                //typeshow <파일> [strict|pragmatic]: 한 파일의 검사 결과와 추론한 타입
+                string[] lines = File.ReadAllText(args[1]).Replace("\r\n" , "\n").Split('\n');
+                TypeCheckLevel level = args.Length > 2 && args[2] is "pragmatic" ? TypeCheckLevel.Pragmatic : TypeCheckLevel.Strict;
+                TypeCheckResult r = JyunoTypeChecker.Check(lines , Host("" , out _) , level , JyunoTypeChecker.JyunoWebHost);
+                foreach (var d in r.Errors) Console.WriteLine("오류 " + d);
+                foreach (var d in r.Warnings) Console.WriteLine("경고 " + d);
+                foreach (string t in r.Types) Console.WriteLine("  " + t);
+                Console.WriteLine($"인스턴스 {r.Instances}, 반복 {r.Rounds}");
+                Console.WriteLine("실행: " + Interpret(lines , args.Length > 3 ? File.ReadAllText(args[3]) : ""));
+                return r.Success ? 0 : 1;
             }
             case "noop":
                 return 0;
