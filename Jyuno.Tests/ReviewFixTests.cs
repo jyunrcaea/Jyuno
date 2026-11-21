@@ -288,6 +288,24 @@ public class ReviewFixTests
         Assert.Equal(2L , Create("x = 5 - 3" , "return x").Run());
     }
 
+    //정적 분석(Native JS, LSP)도 인터프리터와 같은 문법 오류
+    [Fact]
+    public void Analysis_ReportsSameSyntaxErrors()
+    {
+        static string? error(string line)
+        {
+            var statement = Assert.IsType<Jyuno.Analysis.ExpressionStatement>(Assert.Single(Jyuno.Analysis.ScriptAnalysis.Analyze(new[] { line }).Root!.Statements));
+            var expression = statement.Expression is Jyuno.Analysis.AssignExpression assign ? assign.Value : statement.Expression;
+            return ((statement.Expression as Jyuno.Analysis.SyntaxErrorExpression) ?? (expression as Jyuno.Analysis.SyntaxErrorExpression))?.Message;
+        }
+        Assert.Contains("-3" , error("x = 5 -3"));
+        Assert.NotNull(error("w = 1 2 3"));
+        Assert.Null(error("x = 5 - 3"));
+        string deep = "x = " + string.Concat(Enumerable.Repeat("(" , 2000)) + "1" + string.Concat(Enumerable.Repeat(")" , 2000));
+        Assert.Contains("깊게 중첩" , error(deep));
+        Assert.Null(error("x = " + string.Concat(Enumerable.Repeat("(" , 50)) + "1" + string.Concat(Enumerable.Repeat(")" , 50))));
+    }
+
     [Fact]
     public void Tab_IsWhitespace()
     {

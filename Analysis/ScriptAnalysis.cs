@@ -76,6 +76,45 @@ public sealed class ScriptAnalysis
     /// <summary>start 위치부터 식 하나를 해석합니다. (end: 식 다음 토큰의 위치)</summary>
     public static Expression ParseExpression(Token[] tokens , int start , bool closed , out int end)
     {
+        if (!enter())
+            return too_deep(tokens , out end);
+        try
+        {
+            return parse_expression(tokens , start , closed , out end);
+        }
+        finally
+        {
+            depth--;
+        }
+    }
+
+    /// <summary>줄 하나의 식을 해석합니다. 식이 끝난 뒤에 남은 토큰이 있다면 문법 오류입니다. (인터프리터와 같음, 1.6.2부터)</summary>
+    public static Expression ParseLine(Token[] tokens)
+    {
+        Expression expression = ParseExpression(tokens , 0 , false , out int end);
+        if (expression is not SyntaxErrorExpression && end < tokens.Length)
+            return new SyntaxErrorExpression(Interpreter.TrailingMessage(tokens[end]));
+        return expression;
+    }
+
+    //식의 중첩 깊이 (Compiler/OperatorCompiler.cs의 enter_expression과 같은 자리에서 세고, 넘으면 같은 문법 오류, 1.6.2부터)
+    [ThreadStatic]
+    static int depth;
+    static bool enter()
+    {
+        if (depth >= Interpreter.MaxExpressionDepth || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return false;
+        depth++;
+        return true;
+    }
+    static Expression too_deep(Token[] tokens , out int end)
+    {
+        end = tokens.Length;
+        return new SyntaxErrorExpression(Interpreter.TooDeepMessage);
+    }
+
+    static Expression parse_expression(Token[] tokens , int start , bool closed , out int end)
+    {
         end = tokens.Length;
         if (start >= tokens.Length)
             return new ConstantExpression(null);
@@ -120,6 +159,19 @@ public sealed class ScriptAnalysis
     //argument: 키워드(if, return 등)의 인자 자리인지 (괄호 없이 쓴 이름이 없을 때의 오류 메시지가 다름)
     static Expression parse_operators(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
+        if (!enter())
+            return too_deep(tokens , out end);
+        try
+        {
+            return parse_operators_core(tokens , start , closed , argument , out end);
+        }
+        finally
+        {
+            depth--;
+        }
+    }
+    static Expression parse_operators_core(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
         Expression condition = parse_binary(tokens , start , closed , argument , 2 , out end);
         if (condition is SyntaxErrorExpression || !is_operator(tokens , end , "?"))
             return condition;
@@ -145,6 +197,19 @@ public sealed class ScriptAnalysis
 
     static Expression parse_binary(Token[] tokens , int start , bool closed , bool argument , int min , out int end)
     {
+        if (!enter())
+            return too_deep(tokens , out end);
+        try
+        {
+            return parse_binary_core(tokens , start , closed , argument , min , out end);
+        }
+        finally
+        {
+            depth--;
+        }
+    }
+    static Expression parse_binary_core(Token[] tokens , int start , bool closed , bool argument , int min , out int end)
+    {
         Expression left = parse_unary(tokens , start , closed , argument , out end);
         while (left is not SyntaxErrorExpression && end < tokens.Length && tokens[end].type is TokenType.Operator)
         {
@@ -169,6 +234,19 @@ public sealed class ScriptAnalysis
     }
 
     static Expression parse_unary(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
+        if (!enter())
+            return too_deep(tokens , out end);
+        try
+        {
+            return parse_unary_core(tokens , start , closed , argument , out end);
+        }
+        finally
+        {
+            depth--;
+        }
+    }
+    static Expression parse_unary_core(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         if (start < tokens.Length && tokens[start].type is TokenType.Operator)
         {
@@ -203,6 +281,9 @@ public sealed class ScriptAnalysis
                 if (token.value is '(')
                 {
                     Expression inner = ParseExpression(tokens , start + 1 , true , out int inner_end);
+                    //괄호 안의 문법 오류(너무 깊은 식 등)는 줄 전체의 오류
+                    if (inner is SyntaxErrorExpression)
+                        return inner;
                     if (!is_prefix(tokens , inner_end , ')'))
                         return new UnclosedParenthesisExpression(inner);
                     end = inner_end + 1;
@@ -321,7 +402,7 @@ public sealed class ScriptAnalysis
                 if (error is not null)
                     add(block , new TokenErrorStatement(line , error));
                 else if (tokens.Length > 0)
-                    add(block , new ExpressionStatement(line , ParseExpression(tokens , 0 , false , out _)));
+                    add(block , new ExpressionStatement(line , ParseLine(tokens)));
                 else
                     add(block , new Statement(StatementKind.Empty , line));
                 line++;

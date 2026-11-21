@@ -76,8 +76,9 @@ public partial class Interpreter
     static Expr too_deep(Token[] tokens , out int end)
     {
         end = tokens.Length;
-        return syntax_error("식이 너무 깊게 중첩되어 있습니다. (괄호, 연산자, 함수 호출을 여러 줄로 나눠주세요)");
+        return syntax_error(TooDeepMessage);
     }
+    internal const string TooDeepMessage = "식이 너무 깊게 중첩되어 있습니다. (괄호, 연산자, 함수 호출을 여러 줄로 나눠주세요)";
 
     Expr compile_operators_core(Token[] tokens , int start , bool closed , bool argument , out int end)
     {

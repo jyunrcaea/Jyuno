@@ -131,16 +131,21 @@ public partial class Interpreter
         Expr expression = compile_expression(tokens , 0 , false , out int end);
         //식이 끝난 뒤에 남은 토큰이 있다면 오류 (1.6.2부터, 이전에는 조용히 무시해서 x = 5 -3이 5가 되었음)
         if (expression.SyntaxError is null && end < tokens.Length)
-            expression = syntax_error($"식이 끝난 뒤에 남은 값이 있습니다: '{token_text(tokens[end])}' (연산자는 앞뒤를 띄어 쓰고, 함수 호출은 괄호로 묶어주세요)");
+            expression = syntax_error(TrailingMessage(tokens[end]));
         line.Expression = expression.Eval;
         return line;
     }
 
-    static string token_text(Token token) => token.value switch {
-        string s when token.type is TokenType.Constant => $"\"{s}\"",
-        null => "null",
-        _ => Values.Show(token.value)
-    };
+    //식이 끝난 뒤에 남은 토큰의 오류 메시지 (Analysis의 ParseLine과 같음)
+    internal static string TrailingMessage(Token token)
+    {
+        string text = token.value switch {
+            string s when token.type is TokenType.Constant => $"\"{s}\"",
+            null => "null",
+            _ => Values.Show(token.value)
+        };
+        return $"식이 끝난 뒤에 남은 값이 있습니다: '{text}' (연산자는 앞뒤를 띄어 쓰고, 함수 호출은 괄호로 묶어주세요)";
+    }
 
     static bool is_prefix(Token[] tokens , int index , char prefix) => index < tokens.Length && tokens[index].type is TokenType.Prefix && tokens[index].value is char c && c == prefix;
 
