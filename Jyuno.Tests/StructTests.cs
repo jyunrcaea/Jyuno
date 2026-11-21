@@ -1,4 +1,4 @@
-﻿using Jyuno.Analysis;
+using Jyuno.Analysis;
 using Jyuno.Language;
 
 namespace Jyuno.Tests;

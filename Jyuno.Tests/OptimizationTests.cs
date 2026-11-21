@@ -1,4 +1,4 @@
-﻿using Jyuno.Language;
+using Jyuno.Language;
 using System.Globalization;
 
 namespace Jyuno.Tests;

@@ -1,4 +1,4 @@
-﻿namespace Jyuno.Tests;
+namespace Jyuno.Tests;
 
 //string.* 명령어
 public class StringFunctionTests

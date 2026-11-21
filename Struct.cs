@@ -1,4 +1,4 @@
-﻿using Jyuno.Language;
+using Jyuno.Language;
 using System.Collections;
 
 namespace Jyuno;

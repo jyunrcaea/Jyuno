@@ -1,4 +1,4 @@
-﻿# Jyuno
+# Jyuno
 
 작고 가벼운 언어 Jyuno 입니다.  
 [소개 사이트 & 플레이그라운드](https://jyunrcaea.github.io/JyunoWeb)

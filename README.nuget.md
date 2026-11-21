@@ -1,4 +1,4 @@
-﻿# Jyuno
+# Jyuno
 
 Jyuno is a small, lightweight language.  
 [Website & Playground](https://jyunrcaea.github.io/JyunoWeb) · [GitHub](https://github.com/jyunrcaea/Jyuno)
