@@ -13,7 +13,8 @@ public class Parser
         for(int index=0 ; index<text.Length; index++)
         {
             char start = text[index];
-            if (start is ' ')
+            //공백 (1.6.2부터 탭도 공백, 이전에는 이름의 일부가 되었음)
+            if (start is ' ' or '\t')
             {
                 continue;
             }
@@ -103,7 +104,7 @@ public class Parser
             string name;
             {
                 StringBuilder sb = new();
-                for(;index < text.Length && !Grammar.Prefixes.Contains(start = text[index]) && !Grammar.OperatorChars.Contains(start) && start != ' ' && start != '"' && start != '\'' ; index++)
+                for(;index < text.Length && !Grammar.Prefixes.Contains(start = text[index]) && !Grammar.OperatorChars.Contains(start) && start != ' ' && start != '\t' && start != '"' && start != '\'' ; index++)
                 {
                     sb.Append(start);
                 }
@@ -132,9 +133,13 @@ public class Parser
         char before = text[index - 1];
         if (before is ')')
             return true;
-        return before is not ' ' && !Grammar.Prefixes.Contains(before) && !Grammar.OperatorChars.Contains(before);
+        return before is not (' ' or '\t') && !Grammar.Prefixes.Contains(before) && !Grammar.OperatorChars.Contains(before);
     }
 
+    /// <summary>
+    /// 줄마다 간단한 문법 검사를 합니다. (토큰화 오류, 상수 레이블, 값이 없는 연산자)
+    /// 실행할 때의 문법 오류를 모두 찾지는 않습니다.
+    /// </summary>
     public static IEnumerable<GrammarError> Checker(string[] texts)
     {
         for (int line=0 ;line < texts.Length ;line++)
@@ -149,21 +154,32 @@ public class Parser
                 yield return new(line , (string)ret.Last().value);
                 continue;
             }
-            for(int i=1 ;i<ret.Length; i++)
+            //조건 연산자(a ? b : c)의 ':'는 레이블이 아님 (1.6.2부터)
+            int questions = 0;
+            for(int i=0 ;i<ret.Length; i++)
             {
                 switch(ret[i].type)
                 {
-                    //연산자라면?
                     case TokenType.Prefix:
-                        if ((char)ret[i].value is ':' && ret[i - 1].type is TokenType.Constant)
-                            yield return new(line , "상수에 값을 대입할수 없습니다.");
+                        if ((char)ret[i].value is ':')
+                        {
+                            if (questions > 0)
+                                questions--;
+                            else if (i > 0 && ret[i - 1].type is TokenType.Constant)
+                                yield return new(line , "상수에 값을 대입할수 없습니다.");
+                        }
                         break;
-                    //이항 연산자 바로 뒤에는 값 또는 단항 연산자가 와야 함
                     case TokenType.Operator:
-                        if (ret[i - 1].type is TokenType.Operator && Grammar.BinaryPrecedence((string)ret[i - 1].value) >= 0 && !Grammar.IsUnary((string)ret[i].value))
+                        string symbol = (string)ret[i].value;
+                        if (symbol is "?")
+                            questions++;
+                        //이항 연산자 바로 뒤에는 값 또는 단항 연산자가 와야 함
+                        if (i > 0 && ret[i - 1].type is TokenType.Operator && Grammar.BinaryPrecedence((string)ret[i - 1].value) >= 0 && !Grammar.IsUnary(symbol))
                             yield return new(line , "잘못된 연산자 사용.");
+                        //연산자 다음에 값이 없음 (줄 끝 또는 ')' 앞, 1.6.2부터)
+                        else if (i + 1 == ret.Length || (ret[i + 1].type is TokenType.Prefix && ret[i + 1].value is ')' or ':'))
+                            yield return new(line , $"연산자 '{symbol}' 다음에 값이 없습니다.");
                         break;
-                    //아니라면?
                 }
             }
         }

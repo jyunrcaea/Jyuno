@@ -1,0 +1,15 @@
+struct P
+  param x
+endstruct
+n = 0.0 / 0.0
+g = P n
+l = list g
+h = g
+console.writeline (string (equal g h))
+console.writeline (string (equal g g))
+console.writeline (string (g == g))
+console.writeline (string (array.contains l g))
+console.writeline (string (array.contains l (l 0)))
+console.writeline (string (equal (l 0) (l 0)))
+console.writeline (string ((l 0) == (l 0)))
+console.writeline (string (array.indexof l (l 0)))

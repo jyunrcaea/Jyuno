@@ -164,7 +164,7 @@ internal static class Collections
     static int index_of(IList list , object? index)
     {
         if (!Values.TryGetInteger(index , out long i))
-            throw new JyunoException($"인덱스는 정수여야 합니다. ('{index ?? "null"}')");
+            throw new JyunoException($"인덱스는 정수여야 합니다. ('{Values.Show(index)}')");
         if (i < 0 || i >= list.Count)
             throw new JyunoException($"인덱스 {i}은/는 범위를 벗어났습니다. (길이: {list.Count})");
         return (int)i;
@@ -342,10 +342,10 @@ internal static class Collections
     public static string Join(object?[] args , string name)
     {
         IList list = Target(args , name);
-        string separator = args.Length > 1 ? Convert.ToString(args[1] , CultureInfo.InvariantCulture) ?? string.Empty : string.Empty;
+        string separator = args.Length > 1 ? Values.Text(args[1]) : string.Empty;
         string[] texts = new string[list.Count];
         for (int i = 0 ; i < texts.Length ; i++)
-            texts[i] = Convert.ToString(list[i] , CultureInfo.InvariantCulture) ?? string.Empty;
+            texts[i] = Values.Text(list[i]);
         return string.Join(separator , texts);
     }
 

@@ -1,0 +1,24 @@
+struct s
+  a = 1
+  tmp = 2
+  c = 3
+  tmp =
+  d = 4
+endstruct
+console.writeline (string (s))
+struct t
+  param flip
+  if flip
+    b = 2
+    a = 1
+  else
+    a = 1
+    b = 2
+  end
+  flip =
+endstruct
+x = t true
+y = t false
+console.writeline (string x)
+console.writeline (string y)
+console.writeline (string (equal x y))

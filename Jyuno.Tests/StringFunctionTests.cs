@@ -11,7 +11,8 @@ public class StringFunctionTests
         Assert.Equal("1-2-3", Script.Eval("string.join '-' 1 2 3"));
         Assert.Equal("a, b", Script.Eval("string.join ', ' (list 'a' 'b')"));
         Assert.Equal("ab", Script.Eval("string.join null 'a' 'b'"));
-        Assert.Equal("System.Int64[]x", Script.Eval("string.join '' (array 1) 'x'"));
+        //1.6.2부터 배열/리스트는 [1, 2] 형식의 문자열
+        Assert.Equal("[1]x", Script.Eval("string.join '' (array 1) 'x'"));
         Assert.Equal("1 + 2.5 = 3.5, True", Script.Eval("string.format '{0} + {1} = {2}, {3}' 1 2.5 3.5 true"));
         Assert.Equal("[  7] 3.14 00042", Script.Eval("string.format '[{0,3}] {1:F2} {2:D5}' 7 3.14159 42"));
         Assert.Equal("{x}", Script.Eval("string.format '{{x}}'"));

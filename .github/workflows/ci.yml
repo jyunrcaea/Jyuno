@@ -1,0 +1,24 @@
+# 푸시/PR마다 빌드와 테스트 (릴리즈 태그를 올리기 전에 문제를 찾기 위함, 1.6.2부터)
+# Windows는 기본 스택이 1MB라서, 깊은 재귀가 스택 오버플로 없이 오류가 되는지도 함께 확인됨
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 테스트
+        run: dotnet test Jyuno.Tests -c Release

@@ -3,6 +3,8 @@ using Jyuno.Language;
 
 namespace Jyuno.Tests;
 
+//Console을 바꾸는 테스트가 있으므로 ReviewFixConsoleTests와 차례대로 실행
+[Collection("Console")]
 public class StructTests
 {
     static readonly string[] Person = {

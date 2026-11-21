@@ -53,6 +53,28 @@ The executor that actually runs Jyuno code. You can also add functions/variables
 You can also run code one line at a time with ``ExecuteLine()``, but keywords that move the execution position (``if``, ``while``, ``repeat``, ``goto``, etc.) can only be used when running with ``Run()``.<br>
 Even if a script removes a global function/variable of the runtime, it is removed only in that interpreter and does not affect other interpreters of the same runtime.
 
+### Stopping execution and errors (since 1.6.2)
+```cs
+using CancellationTokenSource cancel = new(TimeSpan.FromSeconds(5));
+interpreter.CancellationToken = cancel.Token; //checked before each line runs (stops infinite loops too)
+interpreter.CallDepthLimit = 1000;            //maximum function call depth (default MaxCallDepth, 200)
+try
+{
+    interpreter.Run();
+}
+catch (OperationCanceledException) { /* cancelled */ }
+catch (JyunoException e)
+{
+    Console.WriteLine($"line {e.Line + 1}: {e.Message}");
+}
+```
+- ``CancellationToken``: once cancelled, ``OperationCanceledException`` is thrown before the next line runs.
+- ``CallDepthLimit``: the maximum function call depth. Even below it, a ``JyunoException`` is thrown if the thread runs low on stack.
+- ``JyunoException.Line``: the line (0-based) where the error happened. For other exceptions thrown by functions the program added, use ``interpreter.LastErrorLine``.
+- If an expression on one line is nested too deeply (hundreds of parentheses or operators), or a value to compare/copy/convert to a string is nested too deeply, a ``JyunoException`` is thrown instead of ending the process with a stack overflow.
+- Passing a wrong kind of value to a built-in function throws ``JyunoException`` instead of a C# exception (``InvalidCastException`` etc.). I/O errors of the file commands are also rethrown as ``JyunoException`` (the original exception is the ``InnerException``).
+- If a function added by the program calls ``Run()`` again during execution, execution returns to the calling line and scope afterwards (previously it continued from line 0 in the top-level scope). A line added with ``ExecuteLine(string)`` during execution is not run again by the outer ``Run()``.
+
 ### Execution model and performance
 - Each line is compiled into a closure tree only once, the first time it runs. After that, the compiled tree is executed without re-parsing the tokens.
 - Built-in function calls whose arguments are all constants, such as ``(add 1 2)`` (``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``, ``int``, ``double``, ``string``, ``bool``, ``length``, ``math.*``), are computed ahead of time at compile time.  
@@ -81,7 +103,7 @@ interpreter.Inlining = true;
   - If a C# function calls ``ExecuteLine()`` inside an inlined function, the function scope is created at that point and the line runs inside the function.
   - The same holds if a C# function calls ``Run()`` inside an inlined function. While it runs, ``for``/``repeat`` progress and the arguments read by ``param`` belong to that function. (Since 1.5.3)
   - If the program replaced or inserted lines in ``scripts`` between runs, whether a function can be inlined is checked again. (Since 1.5.3)
-  - The call depth limit (``MaxCallDepth``) and ``CurrentExecuteLine`` are the same as before.
+  - The call depth limit (``CallDepthLimit``) and ``CurrentExecuteLine`` are the same as before.
 - The gains are in code that uses structs and in one-line functions. (With both on: about 2.4x for functions that take a struct, 2.5x for struct comparison, 1.9x for calls to one-line functions, 1.6x for struct functions that build a new struct value and 1.3x for struct assignment. Other code is unaffected.)
 - 1.5.3 fixes 4 problems where a run with the optimizations on differed from a run with them off. All of them involve the C# program stepping in during or between runs. (C# code that runs when a variable is read, ``Run()`` called inside an inlined function, ``scripts`` changed between runs.)  
   Tests that compare runs with the optimizations on and off were added (``Jyuno.Tests/Differential``, 215 scripts).

@@ -53,6 +53,28 @@ Jyuno의 코드를 직접 실행하는 실행기입니다. 인터프리터 내�
 ``ExecuteLine()``으로 한 줄씩 실행할수도 있지만, 실행 위치를 옮기는 키워드(``if``, ``while``, ``repeat``, ``goto`` 등)는 ``Run()``으로 실행할 때만 사용할수 있습니다.<br>
 스크립트가 런타임의 전역 함수/변수를 삭제하더라도 해당 인터프리터에서만 삭제되며, 같은 런타임의 다른 인터프리터에는 영향을 주지 않습니다.
 
+### 실행 중단과 오류 (1.6.2부터)
+```cs
+using CancellationTokenSource cancel = new(TimeSpan.FromSeconds(5));
+interpreter.CancellationToken = cancel.Token; //줄을 실행하기 전마다 확인 (무한 반복문도 멈춤)
+interpreter.CallDepthLimit = 1000;            //함수 호출의 최대 깊이 (기본값은 MaxCallDepth, 200)
+try
+{
+    interpreter.Run();
+}
+catch (OperationCanceledException) { /* 취소됨 */ }
+catch (JyunoException e)
+{
+    Console.WriteLine($"{e.Line + 1}번째 줄: {e.Message}");
+}
+```
+- ``CancellationToken``: 취소되면 다음 줄을 실행하기 전에 ``OperationCanceledException``을 던집니다.
+- ``CallDepthLimit``: 함수 호출의 최대 깊이입니다. 이보다 얕더라도 스레드의 스택이 부족해지면 ``JyunoException``이 납니다.
+- ``JyunoException.Line``: 오류가 난 줄(0부터)입니다. 프로그램이 추가한 함수가 던진 다른 예외는 ``interpreter.LastErrorLine``으로 줄을 알수 있습니다.
+- 한 줄의 식이 너무 깊게 중첩되었거나(괄호, 연산자 수백 단계), 비교/복사/문자열로 바꿀 값이 너무 깊게 중첩되었다면 스택 오버플로로 프로그램이 종료되기 전에 ``JyunoException``을 던집니다.
+- 내장 함수에 맞지 않는 값을 넘기면 C# 예외(``InvalidCastException`` 등) 대신 ``JyunoException``이 납니다. 파일 명령어의 입출력 오류도 ``JyunoException``으로 바꿔서 던집니다. (원래 예외는 ``InnerException``)
+- 실행 도중에 프로그램이 추가한 함수가 ``Run()``을 다시 호출하면, 끝난 뒤 호출한 줄과 영역으로 돌아갑니다. (이전에는 최상위 영역의 0번 줄부터 이어서 실행했습니다) 실행 도중에 ``ExecuteLine(string)``으로 추가한 줄은 바깥의 ``Run()``이 한번 더 실행하지 않습니다.
+
 ### 실행 방식과 성능
 - 각 줄은 처음 실행될 때 한번만 클로저 트리로 컴파일되고, 그 다음부터는 토큰을 다시 해석하지 않고 컴파일된 트리를 실행합니다.
 - ``(add 1 2)``처럼 인자가 모두 상수인 내장 함수 호출(``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``, ``int``, ``double``, ``string``, ``bool``, ``length``, ``math.*``)은 컴파일할 때 미리 계산합니다.  
@@ -81,8 +103,10 @@ interpreter.Inlining = true;       //인라이닝
   - 인라인된 함수 안에서 C# 함수가 ``ExecuteLine()``을 호출하면, 그때 함수 영역을 만들어서 그 줄을 함수 안에서 실행합니다.
   - 인라인된 함수 안에서 C# 함수가 ``Run()``을 호출해도 마찬가지이며, 다시 실행하는 동안의 ``for``/``repeat`` 진행 상태와 ``param``이 읽는 인자는 그 함수의 것입니다. (1.5.3부터)
   - 실행 사이에 프로그램이 ``scripts``의 줄을 바꾸거나 끼워넣었다면, 함수를 인라인할수 있는지 다시 확인합니다. (1.5.3부터)
-  - 호출 깊이 제한(``MaxCallDepth``)과 ``CurrentExecuteLine``은 원래와 같습니다.
+  - 호출 깊이 제한(``CallDepthLimit``)과 ``CurrentExecuteLine``은 원래와 같습니다.
 - 효과는 구조체를 쓰는 코드와 한 줄짜리 함수에 있습니다. (둘 다 켰을 때 구조체를 넘기는 함수 약 2.4배, 구조체 비교 약 2.5배, 한 줄짜리 함수 호출 약 1.9배, 구조체 함수로 새 구조체 값 만들기 약 1.6배, 구조체 대입 약 1.3배. 그 외의 코드는 차이가 없습니다)
+- 1.6.2에서는 비교 연산자를 다시 정의한 구조체에서 켠 실행과 끈 실행의 결과가 달라지던 문제를 고쳤습니다. 빌린 구조체 값을 비교하는 도중에 다시 정의한 ``==``(필드 안의 구조체 포함)를 만나면 복사본으로 다시 비교하고, ``less``/``greater``의 오른쪽 값이 구조체라면 원래 내장 함수로 계산합니다.  
+  연산자 함수가 값을 바꾸는 무작위 스크립트 4만여 개로 네 가지 설정의 결과가 같은지 확인했습니다.
 - 1.5.3에서는 켠 실행과 끈 실행의 결과가 달라지던 문제 4가지를 고쳤습니다. 모두 C# 프로그램이 실행 도중이나 실행 사이에 끼어드는 경우입니다. (변수를 읽을 때 실행되는 C# 코드, 인라인된 함수 안에서의 ``Run()`` 호출, 실행 사이에 바뀐 ``scripts``)  
   켠 실행과 끈 실행을 비교하는 테스트(``Jyuno.Tests/Differential``, 스크립트 215개)를 추가했습니다.
 

@@ -148,7 +148,8 @@ public class OptimizationTests
     [Fact]
     public void Inlined_MissingAndExtraArguments()
     {
-        Assert.Equal("ok null\n3\nab\nnull" , Run(
+        //1.6.2부터 null과 숫자의 덧셈은 오류 (이전에는 null)
+        Assert.Equal("error null을 처리할수 없습니다.\n3\nab" , Run(
             "func f" , "  param a" , "  param b" , "  return (add a b)" , "endfunc" ,
             "out (f 1 2 3)" , "out (f 'a' 'b')" , "out (f 1)"));
     }
@@ -156,8 +157,9 @@ public class OptimizationTests
     [Fact]
     public void Equal_SameVariable_ComparesFieldsLikeCopies()
     {
-        //같은 구조체 값끼리는 필드를 비교하지 않지만, 변수를 두번 읽으면 원래는 복사본끼리 비교함 (NaN은 자신과 같지 않음)
-        Assert.Equal("ok null\nFalse\nFalse\nTrue\nFalse\nTrue" , RunPt(
+        //1.6.2부터 같은 구조체 값끼리도 필드를 비교함 (변수를 두번 읽으면 복사본끼리 비교하는 것과 같음, NaN은 자신과 같지 않음)
+        //리스트의 같은 원소끼리도 필드를 비교하므로 NaN이 있다면 false (1.6.1까지는 true, Native JS와 달랐음)
+        Assert.Equal("ok null\nFalse\nFalse\nFalse\nFalse\nTrue" , RunPt(
             "a = pt (nan)" , "out (equal a a)" ,
             "func self" , "  param q" , "  return (equal q q)" , "endfunc" , "out (self a)" ,
             "l = list a" , "out (equal (l 0) (l 0))" , "out (equal a (l 0))" ,
@@ -197,7 +199,8 @@ public class OptimizationTests
     [Fact]
     public void Constructor_OverwrittenMemberName_IsDeclaredAgainByCopy()
     {
-        Assert.Equal("ok null\nbox { p = pt { x = 1, y = 77 }, p.x = 1 }\n77\n1" , Run(Pt2.Concat(new[] {
+        //복사본에서는 멤버 이름(p.x)이 상수를 덮어씀 (1.6.2부터 멤버 이름은 필드로 표시되지 않음)
+        Assert.Equal("ok null\nbox { p = pt { x = 1, y = 77 } }\n77\n1" , Run(Pt2.Concat(new[] {
             "struct box" , "  param p" , "  local p.y = 77" , "  7 = p.x" , "endstruct" ,
             "b = box (pt 1 2)" , "out (string b)" , "out b.p.y" , "out b.p.x" }).ToArray()));
     }
@@ -325,7 +328,8 @@ public class OptimizationTests
     public void Inlined_HostCallsRunAgain_ParametersStayVisible()
     {
         //인라인된 함수 안에서 C# 함수가 Run()을 다시 호출해도, 함수의 파라미터는 그대로여야 함
-        Assert.Equal("1/9/77/78" , RunHost((escape , inline) => {
+        //(1.6.2부터 Run()이 끝나면 호출한 함수의 영역으로 돌아가므로, 최상위 영역의 p = 77은 함수의 p를 바꾸지 않음)
+        Assert.Equal("1/9/1/2" , RunHost((escape , inline) => {
             Runtime runtime = new();
             Interpreter interpreter = null!;
             runtime.AddFunction("rerun" , args => interpreter.Run((int)(long)args[0]!));

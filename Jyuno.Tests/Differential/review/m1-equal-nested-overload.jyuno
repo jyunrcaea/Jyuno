@@ -1,0 +1,16 @@
+struct inner
+  param v
+  func ==
+    param o
+    g.tail = 99
+    return true
+  endfunc
+endstruct
+struct outer
+  param head
+  param tail
+endstruct
+g = outer (inner 1) 5
+h = outer (inner 1) 5
+console.writeline (equal g h)
+console.writeline g.tail
