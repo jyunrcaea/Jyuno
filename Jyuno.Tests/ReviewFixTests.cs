@@ -286,6 +286,16 @@ public class ReviewFixTests
         Assert.Contains("-3" , error.Message);
         Assert.Throws<JyunoException>(() => Create("w = 1 2 3").Run());
         Assert.Equal(2L , Create("x = 5 - 3" , "return x").Run());
+        Assert.Throws<JyunoException>(() => Create("func f" , "local y = 5 -3" , "return y" , "endfunc" , "return (f)").Run());
+    }
+
+    //오류 메시지의 값은 문화권과 관계없이, 배열/리스트는 [1, 2] 형식
+    [Fact]
+    public void ErrorMessages_ShowValues()
+    {
+        Assert.Contains("'[1]'" , Assert.Throws<JyunoException>(() => Create("x = (list 1) < 2").Run()).Message);
+        Assert.Contains("'1.5'" , Assert.Throws<JyunoException>(() => Create("x = list 1" , "y = x 1.5").Run()).Message);
+        Assert.Contains("'True'" , Assert.Throws<JyunoException>(() => Create("for i true" , "end").Run()).Message);
     }
 
     //정적 분석(Native JS, LSP)도 인터프리터와 같은 문법 오류

@@ -155,7 +155,7 @@ internal static class Values
         //그 외에는 같은 타입이면서 비교할수 있는 값만 (C# 프로그램이 넘긴 char, DateTime 등)
         if (a is IComparable comparable && b is not null && a.GetType() == b.GetType())
             return comparable.CompareTo(b);
-        throw new JyunoException($"'{a ?? "null"}'와/과 '{b ?? "null"}'은/는 크기를 비교할수 없습니다.");
+        throw new JyunoException($"'{Show(a)}'와/과 '{Show(b)}'은/는 크기를 비교할수 없습니다.");
     }
 
     //사칙연산: 자주 쓰는 long/double 조합은 바로 계산하고, 그 외(int, decimal 등 프로그램이 넘긴 값)는 arithmetic에서 계산

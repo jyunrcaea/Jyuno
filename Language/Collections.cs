@@ -164,7 +164,7 @@ internal static class Collections
     static int index_of(IList list , object? index)
     {
         if (!Values.TryGetInteger(index , out long i))
-            throw new JyunoException($"인덱스는 정수여야 합니다. ('{index ?? "null"}')");
+            throw new JyunoException($"인덱스는 정수여야 합니다. ('{Values.Show(index)}')");
         if (i < 0 || i >= list.Count)
             throw new JyunoException($"인덱스 {i}은/는 범위를 벗어났습니다. (길이: {list.Count})");
         return (int)i;

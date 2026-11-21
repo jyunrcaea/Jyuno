@@ -88,10 +88,10 @@ public sealed class ScriptAnalysis
         }
     }
 
-    /// <summary>줄 하나의 식을 해석합니다. 식이 끝난 뒤에 남은 토큰이 있다면 문법 오류입니다. (인터프리터와 같음, 1.6.2부터)</summary>
-    public static Expression ParseLine(Token[] tokens)
+    /// <summary>줄 하나의 식(start부터 줄 끝까지)을 해석합니다. 식이 끝난 뒤에 남은 토큰이 있다면 문법 오류입니다. (인터프리터와 같음, 1.6.2부터)</summary>
+    public static Expression ParseLine(Token[] tokens , int start = 0)
     {
-        Expression expression = ParseExpression(tokens , 0 , false , out int end);
+        Expression expression = ParseExpression(tokens , start , false , out int end);
         if (expression is not SyntaxErrorExpression && end < tokens.Length)
             return new SyntaxErrorExpression(Interpreter.TrailingMessage(tokens[end]));
         return expression;
@@ -505,7 +505,7 @@ public sealed class ScriptAnalysis
                     if (error is null && tokens.Length > 2)
                     {
                         if (tokens.Length > 3 && is_prefix(tokens , 2 , '='))
-                            statement.Value = ParseExpression(tokens , 3 , false , out _);
+                            statement.Value = ParseLine(tokens , 3);
                         else
                             statement.Malformed = true;
                     }

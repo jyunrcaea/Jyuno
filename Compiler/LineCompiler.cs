@@ -123,17 +123,23 @@ public partial class Interpreter
                     break;
                 case KeywordType.Local:
                     if (tokens.Length > 3 && is_prefix(tokens , 2 , '='))
-                        line.LocalValue = compile_expression(tokens , 3 , false , out _).Eval;
+                        line.LocalValue = compile_rest(tokens , 3).Eval;
                     break;
             }
             return line;
         }
-        Expr expression = compile_expression(tokens , 0 , false , out int end);
-        //식이 끝난 뒤에 남은 토큰이 있다면 오류 (1.6.2부터, 이전에는 조용히 무시해서 x = 5 -3이 5가 되었음)
+        line.Expression = compile_rest(tokens , 0).Eval;
+        return line;
+    }
+
+    //start부터 줄 끝까지 식 하나
+    //식이 끝난 뒤에 남은 토큰이 있다면 오류 (1.6.2부터, 이전에는 조용히 무시해서 x = 5 -3이 5가 되었음)
+    Expr compile_rest(Token[] tokens , int start)
+    {
+        Expr expression = compile_expression(tokens , start , false , out int end);
         if (expression.SyntaxError is null && end < tokens.Length)
             expression = syntax_error(TrailingMessage(tokens[end]));
-        line.Expression = expression.Eval;
-        return line;
+        return expression;
     }
 
     //식이 끝난 뒤에 남은 토큰의 오류 메시지 (Analysis의 ParseLine과 같음)

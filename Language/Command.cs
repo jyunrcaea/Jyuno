@@ -336,7 +336,7 @@ public static class JyunoCommands
                 return string.Empty;
             //1.6.2부터 너무 긴 문자열은 만들지 않고 오류 (이전에는 메모리가 부족해질 때까지 멈춘 것처럼 보였음)
             if (count > Strings.MaxLength / str.Length)
-                throw new JyunoException($"반복한 문자열이 너무 깁니다. (최대 {Strings.MaxLength:N0}자)");
+                throw new JyunoException($"반복한 문자열이 너무 깁니다. (최대 {Strings.MaxLength.ToString("N0" , CultureInfo.InvariantCulture)}자)");
             return new StringBuilder(str.Length * (int)count).Insert(0 , str , (int)count).ToString();
         }
         object? mul = 1L;
@@ -479,7 +479,7 @@ public static class JyunoCommands
     {
         if (Values.TryGetReal(value ?? throw null_exception , out double real))
             return real;
-        throw new JyunoException($"'{value}'은/는 숫자가 아닙니다.");
+        throw new JyunoException($"'{Values.Show(value)}'은/는 숫자가 아닙니다.");
     }
 
     //파일 작업의 .NET 예외(권한 없음, 잘못된 경로 등)를 Jyuno 오류로 바꿈 (1.6.2부터)

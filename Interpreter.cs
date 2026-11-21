@@ -564,7 +564,7 @@ public partial class Interpreter : IDisposable
                     string text => text.Select(c => (object?)c.ToString()).ToArray(),
                     //순회 도중 컬렉션이 바뀌어도 영향을 받지 않도록 복사
                     System.Collections.IList list => list.Cast<object?>().ToArray(),
-                    _ => throw new JyunoException($"'{source[0] ?? "null"}'은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)")
+                    _ => throw new JyunoException($"'{Values.Show(source[0])}'은/는 순회할수 없습니다. (배열/리스트/문자열만 가능)")
                 };
                 if (items.Length is 0)
                 {
