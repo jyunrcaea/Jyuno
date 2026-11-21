@@ -40,10 +40,18 @@ public partial class Interpreter
         public object? Call(object?[] args) => interpreter.construct(this , args);
         public object? Execute(params object?[] args)
         {
-            escape(args);
-            object? result = Call(args);
-            escape(result);
-            return result;
+            Interpreter? outer = interpreter.enter();
+            try
+            {
+                escape(args);
+                object? result = Call(args);
+                escape(result);
+                return result;
+            }
+            finally
+            {
+                leave(outer);
+            }
         }
     }
 
@@ -153,21 +161,45 @@ public partial class Interpreter
                 var pair = (x , y);
                 comparing ??= new(PairComparer.Instance);
                 if (!comparing.Add(pair))
+                {
+                    assumed++;
                     return true;
+                }
+                //원소도 복사되는 컬렉션일 때만 원소가 복사본
+                bool deep_a = cloned_a && needs_copy(element_type(x)), deep_b = cloned_b && needs_copy(element_type(y));
+                //같은 리스트를 여러번 담은 값(list a a를 반복한 값 등)은 같은 쌍을 계속 다시 비교하므로 지수 시간이 걸림
+                //이번 비교에서 이미 같다고 확인한 쌍은 다시 비교하지 않음 (1.7.0부터)
+                var key = (x , y , deep_a , deep_b);
+                if (proven is not null && proven.Contains(key))
+                {
+                    comparing.Remove(pair);
+                    return true;
+                }
+                int assumed_before = assumed, calls_before = user_calls;
+                bool result = false;
                 try
                 {
-                    //원소도 복사되는 컬렉션일 때만 원소가 복사본
-                    bool deep_a = cloned_a && needs_copy(element_type(x)), deep_b = cloned_b && needs_copy(element_type(y));
                     for (int i = 0 ; i < x.Count ; i++)
                     {
+                        Interpreter.Tick();
                         if (!same(x[i] , deep_a , y[i] , deep_b))
                             return false;
                     }
+                    result = true;
                     return true;
                 }
                 finally
                 {
                     comparing.Remove(pair);
+                    //비교하고 있던 쌍을 같다고 가정하지 않았고(자기 자신을 담은 리스트) 연산자 함수를 호출하지 않았을 때만 기억
+                    if (result && assumed == assumed_before && user_calls == calls_before)
+                        (proven ??= new(ProvenComparer.Instance)).Add(key);
+                    //가장 바깥의 비교가 끝나면 잊음 (그 뒤로는 리스트가 바뀔수 있으므로)
+                    if (comparing.Count is 0)
+                    {
+                        proven?.Clear();
+                        assumed = 0;
+                    }
                 }
             }
             //==를 다시 정의한 구조체 값은 복사본인지와 관계없이 그 결과 (Values.Same과 같음, 연산자 함수는 복사본에서 실행됨)
@@ -179,6 +211,9 @@ public partial class Interpreter
                     lent_overload = true;
                     return false;
                 }
+                //연산자 함수는 리스트를 바꿀수 있으므로, 이미 같다고 확인한 쌍을 잊음
+                user_calls++;
+                proven?.Clear();
                 return Values.Same(a , b);
             }
             if ((copy_a || copy_b) && a is StructInstance s && b is StructInstance t)
@@ -209,13 +244,50 @@ public partial class Interpreter
         //지금 비교하고 있는 배열/리스트의 쌍 (같은 스레드에서 비교가 이어지는 동안)
         [ThreadStatic]
         static HashSet<(IList, IList)>? comparing;
+        //지금 비교에서 같다고 확인한 쌍 (원소가 복사본인지 포함), 비교하고 있던 쌍을 같다고 가정한 횟수, 연산자 함수를 호출한 횟수
+        [ThreadStatic]
+        static HashSet<(IList, IList, bool, bool)>? proven;
+        [ThreadStatic]
+        static int assumed, user_calls;
+        sealed class ProvenComparer : IEqualityComparer<(IList, IList, bool, bool)>
+        {
+            public static readonly ProvenComparer Instance = new();
+            public bool Equals((IList, IList, bool, bool) a , (IList, IList, bool, bool) b)
+                => ReferenceEquals(a.Item1 , b.Item1) && ReferenceEquals(a.Item2 , b.Item2) && a.Item3 == b.Item3 && a.Item4 == b.Item4;
+            public int GetHashCode((IList, IList, bool, bool) key)
+                => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Item1) , System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Item2) , key.Item3 , key.Item4);
+        }
         sealed class PairComparer : IEqualityComparer<(IList, IList)>
         {
             public static readonly PairComparer Instance = new();
             public bool Equals((IList, IList) a , (IList, IList) b) => ReferenceEquals(a.Item1 , b.Item1) && ReferenceEquals(a.Item2 , b.Item2);
             public int GetHashCode((IList, IList) pair) => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pair.Item1) , System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pair.Item2));
         }
-        public override int GetHashCode() => Type.Line;
+        //같은 값(Same)이라면 같은 해시: 1.7.0부터 필드의 이름과 숫자/문자열/참거짓 값, 배열/리스트의 길이도 섞음
+        //(이전에는 구조체마다 같은 해시라서 distinct, sub 등이 원소 개수의 제곱만큼 걸렸음)
+        //==를 다시 정의한 구조체는 연산자 함수의 결과를 알수 없으므로 구조체마다 같은 해시
+        public override int GetHashCode()
+        {
+            int hash = Type.Line;
+            if (overload(this , "==") is not null)
+                return hash;
+            int i = 0, fields = 0;
+            while (next_field(ref i , out string? name , out object? value))
+            {
+                int item = value switch {
+                    null => 0,
+                    string text => text.GetHashCode(),
+                    bool flag => flag ? 1 : 2,
+                    IList list => list.Count,
+                    //숫자는 타입이 달라도 값이 같다면 같은 값이므로 실수로 (0.0과 -0.0도 같은 값)
+                    _ when Values.TryGetReal(value , out double real) => real == 0 ? 0 : real.GetHashCode(),
+                    _ => 0
+                };
+                //필드를 만든 순서는 비교하지 않으므로 순서와 관계없이 섞음
+                fields += HashCode.Combine(name , item);
+            }
+            return HashCode.Combine(hash , fields);
+        }
 
         //연산자를 다시 정의한 구조체 함수 (add 등 내장 함수에서 호출, 인자와 반환값은 C# 함수를 호출할 때처럼 인터프리터 밖의 값)
         internal override bool TryOperator(string symbol , object?[] args , out object? result) => Type.Interpreter.try_overload(this , symbol , args , out result);
@@ -244,6 +316,8 @@ public partial class Interpreter
     {
         if (instance.Type.HasInnerStruct)
             return false;
+        //구조체 필드를 따라 재귀하므로 깊게 중첩된 값에서 스택이 부족해지기 전에 오류 (1.7.0부터)
+        Values.EnsureStack("구조체 값이 너무 깊게 중첩되어 있습니다.");
         Scope scope = instance.Scope;
         //지우거나 가린 멤버 이름, 점이 들어간 이름이 있다면 보수적으로 제외 (복사본은 구조체 필드의 멤버 이름을 다시 살리고 겹치는 이름을 덮어씀)
         if (scope.Hidden is { Count: > 0 } || scope.Dotted > 0)
@@ -376,25 +450,30 @@ public partial class Interpreter
         key = name;
         if (scope.Hidden is not null && scope.Hidden.Contains(name))
             return false;
+        //점이 아주 많은 이름은 구조체 값을 따라 깊게 재귀하므로, 스택이 부족해서 프로그램이 죽기 전에 오류 (1.7.0부터)
+        Values.EnsureStack("이름을 찾기에는 스택이 부족합니다. (점(.)이 아주 많은 이름이거나 함수 호출이 너무 깊습니다)");
         long bound = -1;
         for (int dot = name.IndexOf('.') ; dot >= 0 ; dot = name.IndexOf('.' , dot + 1))
         {
-            if (dot == 0 || dot == name.Length - 1)
-                continue;
-            if (!scope.Variables.TryGetValue(name[..dot] , out object? variable) || variable is not JyunoVariable holding
-                || holding.Get() is not StructInstance instance || instance.Bound <= bound)
-                continue;
-            string rest = name[(dot + 1)..];
-            if (instance.Scope.Variables.TryGetValue(rest , out object? found))
+            if (dot != 0 && dot != name.Length - 1
+                && scope.Variables.TryGetValue(name[..dot] , out object? variable) && variable is JyunoVariable holding
+                && holding.Get() is StructInstance instance && instance.Bound > bound)
             {
-                (holder, owner, key) = (found, instance.Scope, rest);
-                bound = instance.Bound;
+                string rest = name[(dot + 1)..];
+                if (instance.Scope.Variables.TryGetValue(rest , out object? found))
+                {
+                    (holder, owner, key) = (found, instance.Scope, rest);
+                    bound = instance.Bound;
+                }
+                else if (find_member(instance.Scope , rest , out found , out Scope inner , out string inner_key))
+                {
+                    (holder, owner, key) = (found, inner, inner_key);
+                    bound = instance.Bound;
+                }
             }
-            else if (find_member(instance.Scope , rest , out found , out Scope inner , out string inner_key))
-            {
-                (holder, owner, key) = (found, inner, inner_key);
-                bound = instance.Bound;
-            }
+            //이 영역에 점이 들어간 이름이 없다면 첫 점 앞의 이름만 변수일수 있음 (1.7.0부터, 점마다 앞부분을 잘라 찾느라 이름 길이의 세제곱만큼 걸리던 것을 막음)
+            if (scope.Dotted == 0)
+                break;
         }
         return bound >= 0;
     }
@@ -402,12 +481,21 @@ public partial class Interpreter
     //이름 해석 캐시(NameSite)의 이름이 이 영역에서 멤버 이름인지 (점 앞의 이름에 구조체 값이 없다면 문자열을 만들지 않고 바로 false)
     static bool find_member(Scope scope , NameSite site , out object? holder)
     {
-        foreach (string prefix in site.Prefixes!)
-        {
-            if (scope.Variables.TryGetValue(prefix , out object? variable) && variable is JyunoVariable holding && holding.Get() is StructInstance)
-                return find_member(scope , site.Name , out holder , out _ , out _);
-        }
         holder = null;
+        //점이 들어간 이름이 없는 영역(대부분)에서는 첫 점 앞의 이름만 확인
+        if (scope.Dotted == 0)
+        {
+            if (site.First is string first && scope.Variables.TryGetValue(first , out object? variable) && variable is JyunoVariable holding && holding.Get() is StructInstance)
+                return find_member(scope , site.Name , out holder , out _ , out _);
+            return false;
+        }
+        string name = site.Name;
+        for (int dot = name.IndexOf('.') ; dot >= 0 ; dot = name.IndexOf('.' , dot + 1))
+        {
+            if (dot > 0 && dot < name.Length - 1 && scope.Variables.TryGetValue(name[..dot] , out object? variable)
+                && variable is JyunoVariable holding && holding.Get() is StructInstance)
+                return find_member(scope , name , out holder , out _ , out _);
+        }
         return false;
     }
 
@@ -529,6 +617,7 @@ public partial class Interpreter
                 copied ??= new(ReferenceEqualityComparer.Instance);
                 if (copied.TryGetValue(array , out object? done))
                     return done;
+                Interpreter.Reserve(array.Length * 8L);
                 Array clone = (Array)array.Clone();
                 copied[array] = clone;
                 if (needs_copy(array.GetType().GetElementType()!))
@@ -543,11 +632,15 @@ public partial class Interpreter
                 copied ??= new(ReferenceEqualityComparer.Instance);
                 if (copied.TryGetValue(list , out object? done))
                     return done;
+                Interpreter.Reserve(list.Count * 8L);
                 IList clone = (IList)Activator.CreateInstance(list.GetType() , list.Count)!;
                 copied[list] = clone;
                 bool deep = needs_copy(element_type(list));
                 foreach (object? item in list)
+                {
+                    Interpreter.Tick();
                     clone.Add(deep ? copy_value(item , ref copied) : item);
+                }
                 return clone;
             }
             //그 외의 값(숫자, 문자열 등)은 바꿀수 없으므로 그대로 (프로그램이 제공한 다른 컬렉션도 그대로)

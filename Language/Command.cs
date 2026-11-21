@@ -285,7 +285,7 @@ public static class JyunoCommands
         foreach (object? arg in args)
         {
             if (arg is string)
-                return string.Concat(args.Select(Values.Text));
+                return Interpreter.Concat(args.Select(Values.Text).ToArray());
         }
         //그렇지 않으면 수 연산
         object? sum = args[0];
@@ -337,7 +337,9 @@ public static class JyunoCommands
             //1.6.2부터 너무 긴 문자열은 만들지 않고 오류 (이전에는 메모리가 부족해질 때까지 멈춘 것처럼 보였음)
             if (count > Strings.MaxLength / str.Length)
                 throw new JyunoException($"반복한 문자열이 너무 깁니다. (최대 {Strings.MaxLength.ToString("N0" , CultureInfo.InvariantCulture)}자)");
-            return new StringBuilder(str.Length * (int)count).Insert(0 , str , (int)count).ToString();
+            //StringBuilder와 결과 문자열 (1.7.0부터 메모리 한도를 확인)
+            Interpreter.Reserve(str.Length * count * 4 + 48);
+            return Interpreter.Hold(new StringBuilder(str.Length * (int)count).Insert(0 , str , (int)count).ToString() , str.Length * count * 2);
         }
         object? mul = 1L;
         for(int i=0 ;i<args.Length;i++)

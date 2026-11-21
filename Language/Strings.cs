@@ -15,26 +15,24 @@ internal static class Strings
             string full = "string." + name;
             dict.AddFunction(full , args => function(args , full));
         }
-        add("concat" , (args , _) => {
-            StringBuilder sb = new();
-            foreach (object? arg in args)
-                sb.Append(text_of(arg));
-            return sb.ToString();
-        });
+        add("concat" , (args , _) => Interpreter.Concat(args.Select(text_of).ToArray()));
         add("join" , (args , name) => {
             need(args , 1 , name);
             string separator = text_of(args[0]);
             //값이 배열/리스트 하나라면 그 원소들을 이어붙임
             if (args.Length is 2 && args[1] is System.Collections.IList list)
-                return string.Join(separator , list.Cast<object?>().Select(text_of));
-            return string.Join(separator , args.Skip(1).Select(text_of));
+                return Join(separator , list.Cast<object?>().Select(text_of).ToArray());
+            return Join(separator , args.Skip(1).Select(text_of).ToArray());
         });
         add("format" , (args , name) => {
             need(args , 1 , name);
             string format = text(args , 0 , name);
             try
             {
-                return string.Format(CultureInfo.InvariantCulture , format , format_args(args[1..]));
+                object?[] values = format_args(args[1..]);
+                long length = format_length(format , values);
+                Interpreter.ReserveString(length);
+                return Interpreter.Hold(string.Format(CultureInfo.InvariantCulture , format , values) , length * 2);
             }
             catch (FormatException)
             {
@@ -87,7 +85,11 @@ internal static class Strings
             string s = text(args , 0 , name), old = text(args , 1 , name);
             if (old.Length is 0)
                 throw new JyunoException($"{name}: 바꿀 문자열은 빈 문자열일수 없습니다.");
-            return s.Replace(old , text_or_null(args , 2 , name) ?? string.Empty , StringComparison.Ordinal);
+            string replacement = text_or_null(args , 2 , name) ?? string.Empty;
+            //더 긴 문자열로 바꾼다면 결과의 길이를 미리 계산 (최대로 늘어나도 작다면 세지 않음)
+            if (replacement.Length > old.Length && (long)s.Length / old.Length * (replacement.Length - old.Length) + s.Length >= 1 << 19)
+                Interpreter.ReserveString(s.Length + (long)count_of(s , old) * (replacement.Length - old.Length));
+            return s.Replace(old , replacement , StringComparison.Ordinal);
         });
         add("substring" , (args , name) => {
             need(args , 2 , name);
@@ -100,7 +102,9 @@ internal static class Strings
             need(args , 3 , name);
             string s = text(args , 0 , name);
             int at = index(args[1] , "인덱스" , 0 , s.Length , name);
-            return s.Insert(at , text(args , 2 , name));
+            string value = text(args , 2 , name);
+            Interpreter.ReserveString((long)s.Length + value.Length);
+            return s.Insert(at , value);
         });
         add("remove" , (args , name) => {
             need(args , 2 , name);
@@ -111,11 +115,15 @@ internal static class Strings
         });
         add("toupper" , (args , name) => {
             need(args , 1 , name);
-            return text(args , 0 , name).ToUpperInvariant();
+            string s = text(args , 0 , name);
+            Interpreter.ReserveString(s.Length);
+            return s.ToUpperInvariant();
         });
         add("tolower" , (args , name) => {
             need(args , 1 , name);
-            return text(args , 0 , name).ToLowerInvariant();
+            string s = text(args , 0 , name);
+            Interpreter.ReserveString(s.Length);
+            return s.ToLowerInvariant();
         });
         //trim: 두번째 인자가 있다면 그 문자열에 있는 글자들을 제거 (없거나 빈 문자열이라면 공백 문자)
         add("trim" , (args , name) => trim(args , name , true , true));
@@ -127,13 +135,17 @@ internal static class Strings
         add("split" , (args , name) => {
             need(args , 1 , name);
             string s = text(args , 0 , name);
-            if (args.Length is 1)
-                return s.Split();
-            return s.Split(text(args , 1 , name));
+            string? separator = args.Length is 1 ? null : text(args , 1 , name);
+            //조각마다 문자열 하나와 배열의 칸 하나 (조각의 최대 개수로 어림)
+            Interpreter.Reserve(s.Length * 2L + (s.Length / Math.Max(separator?.Length ?? 1 , 1) + 1) * 32L);
+            return separator is null ? s.Split() : s.Split(separator);
         });
         add("tochararray" , (args , name) => {
             need(args , 1 , name);
-            return text(args , 0 , name).Select(c => c.ToString()).ToArray();
+            string s = text(args , 0 , name);
+            //글자마다 한 글자 문자열(32바이트)과 배열의 칸 하나
+            Interpreter.Reserve(s.Length * 40L + 32);
+            return s.Select(c => c.ToString()).ToArray();
         });
         //charcode: index 위치(생략하면 0)의 UTF-16 코드 (정수)
         add("charcode" , (args , name) => {
@@ -172,13 +184,60 @@ internal static class Strings
             throw new JyunoException($"형식 문자열은 문자열이어야 합니다. ('{Values.Show(format)}')");
         try
         {
-            return string.Format(CultureInfo.InvariantCulture , text , format_args(args));
+            object?[] values = format_args(args);
+            Interpreter.ReserveString(format_length(text , values));
+            return string.Format(CultureInfo.InvariantCulture , text , values);
         }
         catch (FormatException)
         {
             throw new JyunoException($"형식 문자열이 올바르지 않습니다: \"{text}\"");
         }
     }
+    //구분자로 이어붙이기 (string.join, array.join): 긴 문자열이라면 만들기 전에 한도를 확인 (1.7.0부터)
+    internal static string Join(string separator , string[] texts)
+    {
+        long length = (long)separator.Length * Math.Max(texts.Length - 1 , 0);
+        foreach (string text in texts)
+            length += text.Length;
+        Interpreter.ReserveString(length);
+        return Interpreter.Hold(string.Join(separator , texts) , length * 2);
+    }
+
+    //형식 문자열의 결과 길이 어림값 (1.7.0부터): 형식 문자열 + 값의 길이 + 중괄호 안의 숫자(너비, 자릿수 {0,1000} {0:D1000})
+    //'{0:D999999999}'처럼 한 줄로 몇 GB를 만들수 있으므로, 만들기 전에 최대 길이와 메모리 한도를 확인하기 위함
+    static long format_length(string format , object?[] values)
+    {
+        long length = format.Length;
+        foreach (object? value in values)
+            length += value is string s ? s.Length : 32;
+        bool inside = false;
+        long number = 0;
+        foreach (char c in format)
+        {
+            if (c is '{')
+                inside = true;
+            else if (c is '}')
+                inside = false;
+            if (inside && c is >= '0' and <= '9')
+            {
+                number = Math.Min(number * 10 + (c - '0') , int.MaxValue);
+                continue;
+            }
+            length += number;
+            number = 0;
+        }
+        return length + number;
+    }
+
+    //겹치지 않게 찾은 value의 개수 (replace의 결과 길이 계산)
+    static int count_of(string s , string value)
+    {
+        int count = 0;
+        for (int at = s.IndexOf(value , StringComparison.Ordinal) ; at >= 0 ; at = s.IndexOf(value , at + value.Length , StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
     //배열/리스트는 [1, 2, 3] 형식으로 (string.Format은 타입 이름을 씀)
     static object?[] format_args(object?[] args) => args.Select(o => o is System.Collections.IList && o is not string ? Values.Text(o) : o).ToArray();
 
@@ -229,6 +288,7 @@ internal static class Strings
                 throw new JyunoException($"{name}: 채울 글자는 한 글자여야 합니다. ('{c}')");
             fill = c[0];
         }
+        Interpreter.ReserveString(width);
         return left ? s.PadLeft(width , fill) : s.PadRight(width , fill);
     }
 }

@@ -60,6 +60,18 @@ public class Runtime
             return result;
         }
     }
+    /// <summary>
+    /// 이 런타임의 인터프리터마다 스크립트가 붙잡고 있을수 있는 메모리의 대략적인 최대 크기 (바이트, 1.7.0부터). 0(기본값)이면 제한하지 않습니다.
+    /// 인터프리터마다 따로 재고 따로 제한하며(합계가 아님), <see cref="Interpreter.MemoryLimit"/>를 정한 인터프리터는 그 값을 따릅니다.
+    /// 이미 만든 인터프리터에도 바로 적용됩니다.
+    /// </summary>
+    public long MemoryLimit
+    {
+        get => Volatile.Read(ref memory_limit);
+        set => Volatile.Write(ref memory_limit , value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value) , "메모리 한도는 0 이상이어야 합니다. (0은 제한 없음)"));
+    }
+    long memory_limit;
+
     //Dispose 하지 않은 인터프리터도 GC가 수거할수 있도록 약한 참조로 보관 (스레드 안전)
     readonly ConditionalWeakTable<Interpreter , object> interpreters = new();
     static readonly object alive = new();

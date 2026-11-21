@@ -108,7 +108,7 @@ public partial class Interpreter
             case Intrinsic.Less: return box(Values.Compare(x , y) is int lo && lo < 0);
             case Intrinsic.Greater: return box(Values.Compare(x , y) is int go && go > 0);
             case Intrinsic.Add:
-                if (x is string s && y is string t) return string.Concat(s , t);
+                if (x is string s && y is string t) return Interpreter.Concat(s , t);
                 return Miss;
             case Intrinsic.And:
                 if (x is bool p && y is bool q) return box(p && q);
@@ -136,7 +136,7 @@ public partial class Interpreter
             return Miss;
         }
         if (op is Intrinsic.Add && x is string s && y is string t && z is string u)
-            return string.Concat(s , t , u);
+            return Interpreter.Concat(s , t , u);
         return Miss;
     }
 
