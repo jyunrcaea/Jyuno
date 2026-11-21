@@ -458,6 +458,17 @@ public sealed class ScriptAnalysis
                     line = statement.EndLine + 1;
                     break;
                 }
+                case KeywordType.Ttl:
+                {
+                    TtlStatement statement = new(line) { TokenError = error , Arguments = arguments_at(line , 1) };
+                    statement.EndLine = map.Pair[line];
+                    statement.EndTokenError = token_error(statement.EndLine);
+                    add(block , statement);
+                    statement.Body = new Block(statement , function , statement.EndLine);
+                    build(statement.Body , line + 1 , statement.EndLine);
+                    line = statement.EndLine + 1;
+                    break;
+                }
                 case KeywordType.Func:
                 case KeywordType.Struct:
                 {
@@ -588,6 +599,10 @@ public sealed class ScriptAnalysis
                 case LoopStatement loop:
                     walk(loop.Body , scope);
                     break;
+                case TtlStatement limit:
+                    //ttl은 새 영역을 만들지 않음
+                    walk(limit.Body , scope);
+                    break;
                 case ForStatement each:
                     each.InnerScope = new_scope(ScopeKind.For , scope , scope.Function);
                     if (each.VariableName is not null)
@@ -654,6 +669,7 @@ public sealed class ScriptAnalysis
                         collect(branch.Else.Statements , names);
                     break;
                 case LoopStatement loop: collect(loop.Body.Statements , names); break;
+                case TtlStatement limit: collect(limit.Body.Statements , names); break;
                 case FunctionStatement function: if (function.Name is not null) names.Add(function.Name); break;
                 case ParameterStatement parameter: if (parameter.Name is not null) names.Add(parameter.Name); break;
                 case LocalStatement local:
@@ -681,6 +697,7 @@ public sealed class ScriptAnalysis
                     break;
                 case LoopStatement loop: index(loop.Body , at); break;
                 case ForStatement each: index(each.Body , at); break;
+                case TtlStatement limit: index(limit.Body , at); break;
             }
         }
     }
@@ -716,7 +733,8 @@ public sealed class ScriptAnalysis
             Statement? opener = at.Values.FirstOrDefault(o => o is BlockStatement b && b is not FunctionStatement && (b.EndLine == target || (b is IfStatement i && i.ElseLine == target)));
             if (opener is null)
                 return null;
-            if (opener is IfStatement)
+            //endttl 줄: 블록 밖에서 왔다면 아무것도 하지 않고, 블록 안에서 왔다면 블록을 끝냄 (둘 다 다음 줄부터)
+            if (opener is IfStatement or TtlStatement)
                 result = new GotoTarget(target , GotoTargetKind.After , opener);
             else if (opener.Kind is StatementKind.While)
                 result = new GotoTarget(target , GotoTargetKind.Before , opener);
@@ -779,6 +797,7 @@ public sealed class ScriptAnalysis
     /// 2. 내장 함수와 전역 함수/상수(add, mul, console.writeline, null 등)를 다시 정의하거나 대입할수 없음
     /// 3. goto로 블록(if/while/repeat/for) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
     /// 4. 구조체(struct) 생성자 안에서 구조체를 정의할수 없음
+    /// 5. 시간 제한 블록(ttl)을 쓸수 없음 (1.7.0부터, Native JS는 아직 지원하지 않음)
     /// </summary>
     /// <param name="globals">전역 이름 (Runtime.GetGlobals())</param>
     public IReadOnlyList<GrammarError> CheckNativeJs(IReadOnlyDictionary<string , GlobalName> globals)
@@ -832,6 +851,10 @@ public sealed class ScriptAnalysis
                             block(branch.Else);
                         break;
                     case LoopStatement loop: block(loop.Body); break;
+                    case TtlStatement limit:
+                        errors.Add(new GrammarError(limit.Line , "Native JS 제약: 시간 제한 블록(ttl)은 아직 쓸수 없습니다."));
+                        block(limit.Body);
+                        break;
                     case ForStatement each:
                         define(each.Line , each.VariableName , "for 변수로 정의");
                         block(each.Body);
