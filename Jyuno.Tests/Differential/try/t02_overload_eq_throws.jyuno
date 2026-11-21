@@ -1,0 +1,25 @@
+#!dump a b n
+n = 0
+struct box
+	param v
+	func ==
+		param other
+		n += 1
+		if n == 2
+			throw "eq"
+		end
+		v = v + 100
+		return v == other.v
+	endfunc
+endstruct
+a = box 1
+b = box 1
+repeat 3
+	try
+		console.writeline (a == b)
+		console.writeline (equal a b)
+	catch e
+		console.writeline ("caught " + e + " " + n)
+	tried
+end
+console.writeline a

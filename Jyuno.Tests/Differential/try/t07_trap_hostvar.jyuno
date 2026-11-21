@@ -1,0 +1,20 @@
+#!dump p q
+struct point
+	param x
+endstruct
+p = point 1
+q = point 1
+host.settrap "p.x = p.x + 1"
+try
+	console.writeline (equal p q host.trap)
+	console.writeline (less p.x host.trap undefined_name)
+catch e
+	console.writeline e
+tried
+console.writeline p
+try
+	console.writeline (p == q)
+	host.throw
+catch e
+	console.writeline "WRONG"
+tried

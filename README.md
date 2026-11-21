@@ -69,11 +69,14 @@ catch (JyunoException e)
 }
 ```
 - ``CancellationToken``: 취소되면 다음 줄을 실행하기 전에 ``OperationCanceledException``을 던집니다. (1.7.0부터 함수 호출과 오래 걸리는 내장 계산 도중에도 확인)
-- ``CallDepthLimit``: 함수 호출의 최대 깊이입니다. 이보다 얕더라도 스레드의 스택이 부족해지면 ``JyunoException``이 납니다.
+- ``CallDepthLimit``: 함수 호출의 최대 깊이입니다. 이보다 얕더라도 스레드의 스택이 부족해지면 ``JyunoException``이 납니다. (1.7.0부터 ``JyunoLimitException``)
 - ``JyunoException.Line``: 오류가 난 줄(0부터)입니다. 프로그램이 추가한 함수가 던진 다른 예외는 ``interpreter.LastErrorLine``으로 줄을 알수 있습니다.
 - 한 줄의 식이 너무 깊게 중첩되었거나(괄호, 연산자 수백 단계), 비교/복사/문자열로 바꿀 값이 너무 깊게 중첩되었다면 스택 오버플로로 프로그램이 종료되기 전에 ``JyunoException``을 던집니다.
 - 내장 함수에 맞지 않는 값을 넘기면 C# 예외(``InvalidCastException`` 등) 대신 ``JyunoException``이 납니다. 파일 명령어의 입출력 오류도 ``JyunoException``으로 바꿔서 던집니다. (원래 예외는 ``InnerException``)
 - 스크립트가 코드의 일부만 시간을 제한하려면 ``ttl (초)`` ~ ``endttl`` 블록을 씁니다. (1.7.0부터, [Jyuno Language](/Language/README.md#ttl-시간-제한-170부터) 참고) 시간이 지나면 오류 없이 ``endttl`` 다음 줄로 빠져나가며, ttl 밖의 코드는 시간을 확인하지 않습니다. 프로그램이 스크립트 전체의 시간을 제한할 때는 ``CancellationToken``을 쓰세요.
+- 스크립트는 ``try`` ~ ``catch`` ~ ``tried``로 오류를 잡고 ``throw``로 값을 던질수 있습니다. (1.7.0부터, [Jyuno Language](/Language/README.md#try-catch-예외-처리-170부터) 참고) 잡지 않은 ``throw``는 ``JyunoThrownException``(``Value``가 던진 값, 구조체 값은 ``StructValue``)으로 나옵니다.
+  - 프로그램이 정한 한도를 넘은 오류(메모리 한도, ``CallDepthLimit``, 스택 부족, 너무 깊은 식)는 ``JyunoLimitException``이며 스크립트가 잡을수 없습니다. ``JyunoException``의 하위 클래스이므로 ``catch (JyunoException)``으로 받던 코드는 그대로 동작합니다.
+  - 취소(``OperationCanceledException``), ``ttl``의 시간 제한, 블록 구조의 문법 오류, 프로그램이 추가한 함수가 던진 ``JyunoException``이 아닌 예외도 스크립트가 잡을수 없습니다. 스크립트가 잡을수 있게 하려면 함수에서 ``JyunoException``(메시지가 값이 됨)이나 ``JyunoThrownException(값)``을 던지세요.
 - 실행 도중에 프로그램이 추가한 함수가 ``Run()``을 다시 호출하면, 끝난 뒤 호출한 줄과 영역으로 돌아갑니다. (이전에는 최상위 영역의 0번 줄부터 이어서 실행했습니다) 실행 도중에 ``ExecuteLine(string)``으로 추가한 줄은 바깥의 ``Run()``이 한번 더 실행하지 않습니다.
 
 ### 메모리 한도 (1.7.0부터)
@@ -84,7 +87,7 @@ try
 {
     interpreter.Run();
 }
-catch (JyunoException e) { /* 메모리 한도를 넘었습니다. (한도 64MB, 사용중 약 64.3MB) */ }
+catch (JyunoLimitException e) { /* 메모리 한도를 넘었습니다. (한도 64MB, 사용중 약 64.3MB) 스크립트의 try로는 잡을수 없음 */ }
 Console.WriteLine(interpreter.MemoryUsage);   //마지막으로 잰 크기 (바이트)
 ```
 - 스크립트가 붙잡고 있는 값(변수, 구조체 값, 배열/리스트, 반복문 상태, 호출 인자, 계산 중인 줄의 큰 값)의 대략적인 크기를 한도와 비교합니다. 버려진 값(가비지)은 세지 않습니다.
@@ -150,7 +153,7 @@ foreach (Statement statement in analysis.Root!.Statements)  // 구문 트리
 | API | 내용 |
 |---|---|
 | ``ScriptAnalysis.Analyze(lines)`` | 토큰, 블록 구조, 구문 트리(``Root``), 변수 영역(``TopScope``, ``Scopes``), 함수 목록, goto 대상 |
-| ``Statement`` / ``Expression`` | 문장(``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement`` 등)과 식(``CallExpression``, ``AssignExpression``, ``RemoveExpression`` 등). 줄을 컴파일하는 규칙과 같게 나눕니다. 1.6.0부터 연산자는 ``BinaryExpression``, ``UnaryExpression``, ``ConditionalExpression``, ``CompoundAssignExpression``이며, 구조체의 연산자 함수는 ``FunctionStatement.Operator``에 기호가 있습니다. 1.7.0부터 ``ttl`` ~ ``endttl``은 ``TtlStatement``(``Body``, 제한 시간은 ``Arguments[0]``)입니다. 1.6.1부터 ``CallExpression.IsKeywordArgument``는 키워드(``if``, ``return`` 등) 인자의 연산자 식에 괄호 없이 쓴 이름인지 알려줍니다. (없는 이름의 오류 메시지가 다름) |
+| ``Statement`` / ``Expression`` | 문장(``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement`` 등)과 식(``CallExpression``, ``AssignExpression``, ``RemoveExpression`` 등). 줄을 컴파일하는 규칙과 같게 나눕니다. 1.6.0부터 연산자는 ``BinaryExpression``, ``UnaryExpression``, ``ConditionalExpression``, ``CompoundAssignExpression``이며, 구조체의 연산자 함수는 ``FunctionStatement.Operator``에 기호가 있습니다. 1.7.0부터 ``ttl`` ~ ``endttl``은 ``TtlStatement``(``Body``, 제한 시간은 ``Arguments[0]``), ``try`` ~ ``catch`` ~ ``tried``는 ``TryStatement``(``Body``, ``CatchLine``, ``CatchName``, ``CatchBody``), ``throw``는 ``ThrowStatement``(``IsRethrow``)입니다. 1.6.1부터 ``CallExpression.IsKeywordArgument``는 키워드(``if``, ``return`` 등) 인자의 연산자 식에 괄호 없이 쓴 이름인지 알려줍니다. (없는 이름의 오류 메시지가 다름) |
 | ``Scope`` | 영역(최상위, 함수 호출 한번, for 반복 한번, 구조체 값 하나)마다 만들어질수 있는 이름과 종류(변수/함수/상수/구조체) |
 | ``GotoStatement.Targets`` | goto가 같은 블록이나 바깥 블록으로 이동할 때의 실행 위치 |
 | ``ScriptAnalysis.CheckNativeJs(globals)`` | JavaScript로 변환할때(Native JS) 필요한 제약 검사 |
@@ -164,6 +167,7 @@ Native JS(Jyuno 코드를 JavaScript로 변환해서 실행)는 다음을 지켜
 4. 블록 구조 오류(``end`` 누락 등)는 그 줄에 도달하기 전에, 실행하기 전에 보고합니다.
 5. 구조체(``struct``, 1.5.1부터 Native JS 지원) 안에서 다른 구조체를 정의할수 없습니다.
 6. 시간 제한 블록(``ttl``, 1.7.0부터)은 아직 쓸수 없습니다.
+7. ``try``/``catch``와 ``throw``(1.7.0부터)는 아직 쓸수 없습니다.
 
 1.6.0의 연산자(``+``, ``==``, ``&&`` 등)와 구조체의 연산자 함수(``func +``)는 JyunoSdk 0.5.0부터 Native JS가 지원합니다. (Jyuno 1.6.1 필요)
 

@@ -114,6 +114,7 @@ public partial class Interpreter
                     break;
                 }
                 case KeywordType.Return:
+                case KeywordType.Throw:
                 case KeywordType.Goto:
                 case KeywordType.Repeat:
                 case KeywordType.Ttl:

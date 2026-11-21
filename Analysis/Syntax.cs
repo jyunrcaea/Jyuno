@@ -1,4 +1,4 @@
-using Jyuno.Compiler;
+﻿using Jyuno.Compiler;
 using Jyuno.Language;
 
 namespace Jyuno.Analysis;
@@ -170,7 +170,11 @@ public enum StatementKind
     /// <summary>struct ~ endstruct (FunctionStatement, 1.5.0부터)</summary>
     Struct,
     /// <summary>ttl ~ endttl: 시간 제한 블록 (TtlStatement, 1.7.0부터)</summary>
-    Ttl
+    Ttl,
+    /// <summary>try ~ catch ~ tried (TryStatement, 1.7.0부터)</summary>
+    Try,
+    /// <summary>throw (값) 또는 값 없는 throw (ThrowStatement, 1.7.0부터)</summary>
+    Throw
 }
 
 /// <summary>문장 (줄 하나, 또는 블록 하나)</summary>
@@ -194,7 +198,7 @@ public class Statement
     public Scope Scope { get; internal set; } = null!;
     /// <summary>이 문장이 들어있는 함수 (최상위라면 null)</summary>
     public FunctionStatement? Function => Parent.Function;
-    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat/ttl은 키워드 다음부터, for는 이름 다음부터, 1.6.0부터 인자 하나하나가 식이며 이름 다음에 값이 있다면 함수 호출)</summary>
+    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat/ttl/throw는 키워드 다음부터, for는 이름 다음부터, 1.6.0부터 인자 하나하나가 식이며 이름 다음에 값이 있다면 함수 호출)</summary>
     public IReadOnlyList<Expression> Arguments { get; internal set; } = Array.Empty<Expression>();
 }
 
@@ -216,7 +220,7 @@ public sealed class TokenErrorStatement : Statement
 public abstract class BlockStatement : Statement
 {
     internal BlockStatement(StatementKind kind , int line) : base(kind , line) { }
-    /// <summary>블록을 닫는 줄 (end, endfunc, endstruct 또는 endttl)</summary>
+    /// <summary>블록을 닫는 줄 (end, endfunc, endstruct, endttl 또는 tried)</summary>
     public int EndLine { get; internal set; }
     /// <summary>end 줄의 토큰화 오류</summary>
     public string? EndTokenError { get; internal set; }
@@ -257,6 +261,30 @@ public sealed class TtlStatement : BlockStatement
 {
     internal TtlStatement(int line) : base(StatementKind.Ttl , line) { }
     public Block Body { get; internal set; } = null!;
+}
+
+/// <summary>
+/// try ~ catch (이름) ~ tried: try 본문(Body)에서 난 오류나 throw한 값을 catch 본문(CatchBody)에서 처리 (1.7.0부터).
+/// 두 본문 모두 try와 같은 영역에서 실행하며(새 영역을 만들지 않음), CatchName은 local처럼 지금 영역에 만들어짐.
+/// EndLine은 tried 줄. 프로그램이 정한 한도(JyunoLimitException), 취소, ttl의 제한 시간, 블록 구조의 문법 오류는 잡지 않음
+/// </summary>
+public sealed class TryStatement : BlockStatement
+{
+    internal TryStatement(int line) : base(StatementKind.Try , line) { }
+    public Block Body { get; internal set; } = null!;
+    /// <summary>catch 줄</summary>
+    public int CatchLine { get; internal set; }
+    public string? CatchTokenError { get; internal set; }
+    /// <summary>잡은 값(오류라면 메시지 문자열, throw라면 던진 값)을 받을 변수 이름 (없다면 null)</summary>
+    public string? CatchName { get; internal set; }
+    public Block CatchBody { get; internal set; } = null!;
+}
+
+/// <summary>throw (값): 값을 던짐. 값이 없다면(IsRethrow) catch 본문에서 처리중인 오류를 그대로 다시 던짐 (1.7.0부터)</summary>
+public sealed class ThrowStatement : Statement
+{
+    internal ThrowStatement(int line) : base(StatementKind.Throw , line) { }
+    public bool IsRethrow { get; internal set; }
 }
 
 /// <summary>func ~ endfunc, 또는 struct ~ endstruct (Kind가 StatementKind.Struct, 본문은 생성자)</summary>
@@ -336,7 +364,7 @@ public enum GotoTargetKind
 {
     /// <summary>Statement 앞으로 이동</summary>
     Before,
-    /// <summary>Statement 다음으로 이동 (if의 else/end 줄, ttl의 endttl 줄)</summary>
+    /// <summary>Statement 다음으로 이동 (if의 else/end 줄, ttl의 endttl 줄, try의 catch/tried 줄)</summary>
     After,
     /// <summary>goto를 감싸는 반복문(Statement)의 다음 반복 (repeat/for의 end 줄)</summary>
     Continue,

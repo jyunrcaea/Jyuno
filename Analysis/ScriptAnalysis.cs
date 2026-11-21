@@ -1,4 +1,4 @@
-using Jyuno.Compiler;
+﻿using Jyuno.Compiler;
 using Jyuno.Language;
 
 namespace Jyuno.Analysis;
@@ -469,6 +469,26 @@ public sealed class ScriptAnalysis
                     line = statement.EndLine + 1;
                     break;
                 }
+                case KeywordType.Try:
+                {
+                    TryStatement statement = new(line) { TokenError = error };
+                    statement.CatchLine = map.Pair[line];
+                    statement.CatchTokenError = token_error(statement.CatchLine);
+                    statement.CatchName = Tokens[statement.CatchLine].Length == 2 ? name_at(statement.CatchLine , 1) : null;
+                    statement.EndLine = map.Pair[statement.CatchLine];
+                    statement.EndTokenError = token_error(statement.EndLine);
+                    add(block , statement);
+                    statement.Body = new Block(statement , function , statement.CatchLine);
+                    build(statement.Body , line + 1 , statement.CatchLine);
+                    statement.CatchBody = new Block(statement , function , statement.EndLine);
+                    build(statement.CatchBody , statement.CatchLine + 1 , statement.EndLine);
+                    line = statement.EndLine + 1;
+                    break;
+                }
+                case KeywordType.Throw:
+                    add(block , new ThrowStatement(line) { TokenError = error , Arguments = arguments_at(line , 1) , IsRethrow = tokens.Length == 1 });
+                    line++;
+                    break;
                 case KeywordType.Func:
                 case KeywordType.Struct:
                 {
@@ -603,6 +623,13 @@ public sealed class ScriptAnalysis
                     //ttl은 새 영역을 만들지 않음
                     walk(limit.Body , scope);
                     break;
+                case TryStatement attempt:
+                    //try와 catch 본문은 새 영역을 만들지 않으며, catch의 이름은 local처럼 지금 영역에 만들어짐
+                    walk(attempt.Body , scope);
+                    if (attempt.CatchName is not null)
+                        scope.Add(attempt.CatchName , NameKinds.Variable);
+                    walk(attempt.CatchBody , scope);
+                    break;
                 case ForStatement each:
                     each.InnerScope = new_scope(ScopeKind.For , scope , scope.Function);
                     if (each.VariableName is not null)
@@ -670,6 +697,11 @@ public sealed class ScriptAnalysis
                     break;
                 case LoopStatement loop: collect(loop.Body.Statements , names); break;
                 case TtlStatement limit: collect(limit.Body.Statements , names); break;
+                case TryStatement attempt:
+                    collect(attempt.Body.Statements , names);
+                    if (attempt.CatchName is not null) names.Add(attempt.CatchName);
+                    collect(attempt.CatchBody.Statements , names);
+                    break;
                 case FunctionStatement function: if (function.Name is not null) names.Add(function.Name); break;
                 case ParameterStatement parameter: if (parameter.Name is not null) names.Add(parameter.Name); break;
                 case LocalStatement local:
@@ -698,6 +730,10 @@ public sealed class ScriptAnalysis
                 case LoopStatement loop: index(loop.Body , at); break;
                 case ForStatement each: index(each.Body , at); break;
                 case TtlStatement limit: index(limit.Body , at); break;
+                case TryStatement attempt:
+                    index(attempt.Body , at);
+                    index(attempt.CatchBody , at);
+                    break;
             }
         }
     }
@@ -730,11 +766,12 @@ public sealed class ScriptAnalysis
         else
         {
             //else/end 줄: 인터프리터가 그 줄을 실행했을 때와 같은 위치
-            Statement? opener = at.Values.FirstOrDefault(o => o is BlockStatement b && b is not FunctionStatement && (b.EndLine == target || (b is IfStatement i && i.ElseLine == target)));
+            Statement? opener = at.Values.FirstOrDefault(o => o is BlockStatement b && b is not FunctionStatement && (b.EndLine == target || (b is IfStatement i && i.ElseLine == target) || (b is TryStatement t && t.CatchLine == target)));
             if (opener is null)
                 return null;
             //endttl 줄: 블록 밖에서 왔다면 아무것도 하지 않고, 블록 안에서 왔다면 블록을 끝냄 (둘 다 다음 줄부터)
-            if (opener is IfStatement or TtlStatement)
+            //try의 catch/tried 줄: 어디서 왔든 try 블록이 끝나고 tried 다음 줄부터
+            if (opener is IfStatement or TtlStatement or TryStatement)
                 result = new GotoTarget(target , GotoTargetKind.After , opener);
             else if (opener.Kind is StatementKind.While)
                 result = new GotoTarget(target , GotoTargetKind.Before , opener);
@@ -798,6 +835,7 @@ public sealed class ScriptAnalysis
     /// 3. goto로 블록(if/while/repeat/for) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
     /// 4. 구조체(struct) 생성자 안에서 구조체를 정의할수 없음
     /// 5. 시간 제한 블록(ttl)을 쓸수 없음 (1.7.0부터, Native JS는 아직 지원하지 않음)
+    /// 6. try/catch와 throw를 쓸수 없음 (1.7.0부터, Native JS는 아직 지원하지 않음)
     /// </summary>
     /// <param name="globals">전역 이름 (Runtime.GetGlobals())</param>
     public IReadOnlyList<GrammarError> CheckNativeJs(IReadOnlyDictionary<string , GlobalName> globals)
@@ -854,6 +892,15 @@ public sealed class ScriptAnalysis
                     case TtlStatement limit:
                         errors.Add(new GrammarError(limit.Line , "Native JS 제약: 시간 제한 블록(ttl)은 아직 쓸수 없습니다."));
                         block(limit.Body);
+                        break;
+                    case TryStatement attempt:
+                        errors.Add(new GrammarError(attempt.Line , "Native JS 제약: try/catch는 아직 쓸수 없습니다."));
+                        define(attempt.CatchLine , attempt.CatchName , "catch 변수로 정의");
+                        block(attempt.Body);
+                        block(attempt.CatchBody);
+                        break;
+                    case ThrowStatement thrown:
+                        errors.Add(new GrammarError(thrown.Line , "Native JS 제약: throw는 아직 쓸수 없습니다."));
                         break;
                     case ForStatement each:
                         define(each.Line , each.VariableName , "for 변수로 정의");

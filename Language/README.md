@@ -219,6 +219,52 @@ end
 - ``ttl``과 ``endttl``은 키워드이므로 변수/함수 이름으로 쓸수 없습니다.
 - 스크립트를 실행하는 C# 프로그램이 전체 실행 시간을 제한하려면 ``Interpreter.CancellationToken``을 쓰세요. ttl은 스크립트가 스스로 정하는 제한이며, ttl 안에서도 CancellationToken은 그대로 동작합니다.
 - 프로그램이 정한 메모리 한도(``MemoryLimit``)를 ttl 안에서 넘으면 오류이며, ttl처럼 endttl 다음 줄로 빠져나가지 않습니다. 취소와 메모리 한도는 스크립트가 피할수 없는 제한입니다.
+### try, catch (예외 처리, 1.7.0부터)
+Jyuno에서 try는 아래와 같은 형식을 가집니다.
+```
+try
+	(오류가 날수 있는 코드)
+catch (변수명)
+	(오류가 났을때 실행할 코드)
+tried
+```
+try와 catch 사이를 실행하다가 오류가 나면, 그 줄의 나머지를 실행하지 않고 catch와 tried 사이를 실행합니다. 오류가 나지 않았다면 catch와 tried 사이는 건너뜁니다.  
+(변수명)에는 오류 메시지(문자열)가, ``throw``로 던졌다면 던진 값이 들어갑니다.
+```
+try
+	zero = 0
+	x = div 1 zero
+catch e
+	console.writeline "Jyuno Exception: {1}" e
+tried
+```
+위 코드는 ``Jyuno Exception: 0으로 나눌수 없습니다.``를 출력합니다.
+
+``throw (값)``으로 값을 던질수 있습니다. 정수, 문자열, 배열/리스트, 구조체 값, ``null`` 등 아무 값이나 던질수 있으며, 구조체 값은 ``return``처럼 복사됩니다.
+```
+func withdraw
+	param amount
+	if amount > balance
+		throw "잔액이 부족합니다."
+	end
+	balance -= amount
+endfunc
+balance = 100
+try
+	withdraw 500
+catch e
+	console.writeline e
+tried
+```
+- catch 안에서 값 없이 ``throw``만 쓰면, 처리중인 오류를 그대로 다시 던집니다. 오류가 난 줄과 오류의 종류도 원래대로입니다. ``throw e``는 같은 값을 새로 던지므로, 오류가 난 줄이 ``throw e`` 줄이 됩니다.
+- 함수 안에서 난 오류도 잡을수 있습니다. 오류가 나면 그 사이의 함수 호출은 모두 끝나고(지역 변수도 사라짐), try 블록 안에서 진행중이던 ``for``/``repeat``/``while``도 함께 끝납니다. 블록 안의 다른 대입은 그대로 남습니다.
+- try와 catch는 새 영역을 만들지 않습니다. 블록 안에서 만든 변수는 tried 다음에도 쓸수 있습니다.
+- catch의 (변수명)은 ``local``처럼 지금 영역(함수 안이라면 그 호출)의 변수가 됩니다. 함수 밖에 같은 이름의 변수가 있어도 바뀌지 않습니다. 값이 필요없다면 ``catch``만 써도 됩니다.
+- try 안에 try를 쓸수 있습니다. catch 안에서 난 오류는 바깥의 try가 잡습니다.
+- ``break``, ``goto``, ``return``으로 try나 catch를 빠져나갈수 있습니다. 하지만 바깥에서 ``goto``로 try나 catch의 안쪽으로 들어갈수는 없습니다. (오류)
+- 잡을수 없는 것도 있습니다. 프로그램(C#)이 정한 한도(메모리 한도, 함수 호출의 최대 깊이, 스택 부족, 너무 깊은 식)를 넘은 것, ``CancellationToken``으로 취소된 것, ``ttl``의 시간이 지난 것, 블록 구조의 문법 오류(``end`` 누락 등)는 catch를 지나쳐서 스크립트를 끝냅니다. 프로그램이 추가한 함수가 던진 예외도 ``JyunoException``일 때만 잡습니다.
+- 잡지 않은 ``throw``는 스크립트를 끝내고, C# 프로그램은 ``JyunoThrownException``(``Value``가 던진 값)을 받습니다.
+- ``try``, ``catch``, ``tried``, ``throw``는 키워드이므로 변수/함수 이름으로 쓸수 없습니다.
 ## 함수 만들기
 ### func
 Jyuno에서 함수는 아래와 같은 형식으로 만듭니다.

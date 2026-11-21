@@ -1,4 +1,4 @@
-using Jyuno.Compiler;
+﻿using Jyuno.Compiler;
 using Jyuno.Language;
 
 namespace Jyuno;
@@ -42,7 +42,8 @@ public partial class Interpreter
     static bool is_operator(Token[] tokens , int index , string symbol) => index < tokens.Length && tokens[index].type is TokenType.Operator && (string)tokens[index].value == symbol;
 
     //문법 오류가 있는 식 (실행하면 오류)
-    static Expr syntax_error(string message) => new(() => throw new JyunoException(message)) { SyntaxError = message };
+    //식이 너무 깊은 것은 스택의 크기에 따라 달라질수 있으므로 catch로 잡을수 없는 한도 오류 (1.7.0부터)
+    static Expr syntax_error(string message) => new(() => throw (message == TooDeepMessage ? new JyunoLimitException(message) : new JyunoException(message))) { SyntaxError = message };
 
     //─────────── 컴파일 ───────────
 

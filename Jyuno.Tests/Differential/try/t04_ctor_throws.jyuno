@@ -1,0 +1,19 @@
+#!dump made last
+made = list
+struct item
+	param n
+	list.push made n
+	if n % 3 == 0
+		throw (string n)
+	end
+	inner = list n n
+endstruct
+for i (array.range 7)
+	try
+		last = item i
+		console.writeline last
+	catch e
+		console.writeline ("ctor " + e)
+	tried
+end
+console.writeline made
