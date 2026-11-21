@@ -106,18 +106,25 @@ public partial class Interpreter : IDisposable
         public NameSite(string name)
         {
             Name = name;
-            //멤버 이름일수 있다면 점 앞의 이름들 (a.b.c → a, a.b)
-            List<string>? prefixes = null;
+            //멤버 이름일수 있는지 (a.b.c → 점 앞의 이름 a, a.b 중 하나에 구조체 값이 있다면)
+            //1.7.0부터 점 앞의 이름을 모두 만들어두지 않음 (점이 많은 긴 이름은 길이의 제곱만큼 메모리를 썼음)
             for (int dot = name.IndexOf('.') ; dot >= 0 ; dot = name.IndexOf('.' , dot + 1))
             {
                 if (dot > 0 && dot < name.Length - 1)
-                    (prefixes ??= new()).Add(name[..dot]);
+                {
+                    Member = true;
+                    break;
+                }
             }
-            Prefixes = prefixes?.ToArray();
+            int first = name.IndexOf('.');
+            if (first > 0 && first < name.Length - 1)
+                First = name[..first];
         }
         public readonly string Name;
-        //점이 들어간 이름이라면 점 앞의 이름들 (그 이름의 변수에 구조체 값이 있다면 멤버 이름일수 있음)
-        public readonly string[]? Prefixes;
+        //점이 들어간 이름이라면 멤버 이름일수 있음 (그 점 앞의 이름의 변수에 구조체 값이 있다면)
+        public readonly bool Member;
+        //첫 점 앞의 이름 (점이 들어간 이름이 없는 영역에서는 이 이름만 변수일수 있음, 이름이 점으로 시작한다면 null)
+        public readonly string? First;
         //1단계: 같은 영역에서 다시 찾는 경우 (while 문 등)
         public Scope? Scope;
         public long ScopeVersion, Version;
@@ -148,7 +155,7 @@ public partial class Interpreter : IDisposable
         }
         Scope? parent = scope.Parent;
         if (parent is not null && site.Parent == parent && site.ParentVersion == bindings_version && !scope.Variables.ContainsKey(site.Name)
-            && !(site.Prefixes is not null && find_member(scope , site , out _)))
+            && !(site.Member && find_member(scope , site , out _)))
         {
             holder = site.ParentHolder;
             remember(site , scope , holder);
@@ -160,7 +167,7 @@ public partial class Interpreter : IDisposable
     {
         Scope scope = current;
         string name = site.Name;
-        if (scope.Variables.TryGetValue(name , out holder) || (site.Prefixes is not null && find_member(scope , site , out holder)))
+        if (scope.Variables.TryGetValue(name , out holder) || (site.Member && find_member(scope , site , out holder)))
         {
             remember(site , scope , holder);
             return true;
@@ -170,7 +177,7 @@ public partial class Interpreter : IDisposable
         {
             //이 영역이 바뀌면 이 결과도 바뀔수 있음
             outer.Shared = true;
-            if (outer.Variables.TryGetValue(name , out holder) || (site.Prefixes is not null && find_member(outer , site , out holder)))
+            if (outer.Variables.TryGetValue(name , out holder) || (site.Member && find_member(outer , site , out holder)))
             {
                 found = true;
                 break;
@@ -279,6 +286,9 @@ public partial class Interpreter : IDisposable
     {
         int current = CurrentExecuteLine;
         CurrentExecuteLine = line;
+        Interpreter? outer = enter();
+        int mark = hold_roots(out int floor);
+        statement_floor = mark;
         try
         {
             materialize_inline();
@@ -297,6 +307,8 @@ public partial class Interpreter : IDisposable
         finally
         {
             CurrentExecuteLine = current;
+            release_roots(mark , floor);
+            leave(outer);
         }
     }
     //예외가 Run()/ExecuteLine() 밖으로 나가기 전에 오류가 난 줄을 기록함 (예외 필터는 finally보다 먼저 실행되므로 가장 안쪽의 줄을 알수 있음, 예외를 잡지는 않음)
@@ -336,10 +348,16 @@ public partial class Interpreter : IDisposable
         top_repeat_counts.Clear();
         top_for_states.Clear();
         current = top;
+        Interpreter? outer = enter();
+        int mark = hold_roots(out int floor);
+        //C# 함수에서 Run()을 호출했다면 그 함수를 호출한 줄의 영역
+        roots.Add(caller_scope);
+        statement_floor = roots.Count;
         try
         {
             for (CurrentExecuteLine = start ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
+                next_statement();
                 var ret = execute_line(CurrentExecuteLine , true);
                 if (ret is ReturnInfo ri)
                 {
@@ -373,6 +391,8 @@ public partial class Interpreter : IDisposable
                 frames.Pop();
                 inline_depth++;
             }
+            release_roots(mark , floor);
+            leave(outer);
         }
     }
     object? execute_line(int line , bool flow)
@@ -419,6 +439,14 @@ public partial class Interpreter : IDisposable
         public readonly object?[] Items;
         public readonly Scope Outer;
         public int Index;
+    }
+    //for 문의 순회할 원소를 만들기 전에 메모리 한도를 확인 (문자열은 글자마다 한 글자 문자열 하나)
+    static void reserve_for(object? source)
+    {
+        if (source is string chars)
+            Reserve(chars.Length * 40L + 32);
+        else if (source is System.Collections.IList list)
+            ReserveItems(list.Count);
     }
     //반복 한번을 위한 새 영역을 만들고 원소를 변수에 넣음
     void enter_for(ForState state)
@@ -478,6 +506,8 @@ public partial class Interpreter : IDisposable
                 //goto로 빠져나가는 for 문은 안쪽부터 정리 (마지막에 가장 바깥 for 문의 바깥 영역으로 되돌아감)
                 foreach (int for_line in for_states.Keys.Where(o => !(o < goto_line && goto_line <= map.Pair[o])).OrderByDescending(o => o).ToList())
                     exit_for(for_line);
+                //goto로 만든 반복문도 반복문의 끝(end)처럼 메모리 사용량을 확인
+                poll_memory();
                 jump((int)goto_line);
                 break;
             //만약
@@ -512,6 +542,8 @@ public partial class Interpreter : IDisposable
                 break;
             case KeywordType.End:
                 int opener = map.Pair[line];
+                //반복문의 다음 반복: 지난번에 잰 뒤로 많이 할당했다면 메모리 사용량을 다시 잼 (if의 end에서도 확인하지만 비용은 같음)
+                poll_memory();
                 switch (keyword_of(opener))
                 {
                     //while은 조건을 다시 검사
@@ -560,6 +592,7 @@ public partial class Interpreter : IDisposable
                 var source = compiled.Arguments();
                 if (source.Length is not 1)
                     throw new JyunoException("for 다음에는 변수 이름과 순회할 값 하나만 와야 합니다.");
+                reserve_for(source[0]);
                 object?[] items = source[0] switch {
                     string text => text.Select(c => (object?)c.ToString()).ToArray(),
                     //순회 도중 컬렉션이 바뀌어도 영향을 받지 않도록 복사
@@ -662,6 +695,13 @@ public partial class Interpreter : IDisposable
         public readonly int InlineDepth;
         public readonly Dictionary<int , long> RepeatCounts = new();
         public readonly Dictionary<int , ForState> ForStates = new();
+        //호출이 끝나면 되돌릴 상태: 호출한 줄, 호출한 쪽의 영역, 진행중이던 인라인된 호출
+        public int Line;
+        public Scope Caller = null!;
+        public InlineShape? OuterInline;
+        //메모리 한도: 호출 전의 roots 위치와 statement_floor, 돌려준 값 (Memory.cs)
+        public int Mark, Floor;
+        public object? Result;
     }
     Stack<CallFrame> frames = new();
     //무한 재귀로 프로그램이 죽지 않도록 제한 (기본값, 인터프리터마다 CallDepthLimit으로 바꿀수 있음)
@@ -673,6 +713,9 @@ public partial class Interpreter : IDisposable
             throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {call_depth_limit}번)");
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             throw new JyunoException("함수 호출이 너무 깊어서 스택이 부족합니다.");
+        //인라인된 호출은 줄을 실행하지 않으므로, 한 줄 안에서 끝나지 않는 재귀도 멈출수 있도록 호출마다 취소를 확인 (1.7.0부터)
+        check_cancel();
+        poll_memory();
     }
 
     //스크립트에서 func로 만든 함수
@@ -713,10 +756,18 @@ public partial class Interpreter : IDisposable
         //C# 프로그램에서의 호출: 주고받는 값은 인터프리터 밖의 값
         public object? Execute(params object?[] args)
         {
-            escape(args);
-            object? result = Call(args);
-            escape(result);
-            return result;
+            Interpreter? outer = interpreter.enter();
+            try
+            {
+                escape(args);
+                object? result = Call(args);
+                escape(result);
+                return result;
+            }
+            finally
+            {
+                leave(outer);
+            }
         }
     }
     //스크립트에서 함수를 호출 (C# 함수라면 인자와 반환값은 인터프리터 밖으로 나갔다 들어온 값)
@@ -732,6 +783,8 @@ public partial class Interpreter : IDisposable
                 escape(args);
                 object? result = function.Execute(args);
                 escape(result);
+                if (function is NativeFunction { Host: true })
+                    after_host_call(result);
                 return result;
         }
     }
@@ -739,19 +792,16 @@ public partial class Interpreter : IDisposable
     object? call_function(int line , int end , Scope body , object?[] args)
     {
         check_call_depth();
-        int current_line = CurrentExecuteLine;
-        Scope caller = current;
-        InlineShape? outer_frame = inline_frame;
-        frames.Push(new CallFrame(args , inline_depth));
-        current = body;
-        inline_frame = null;
+        //돌아올 때 되돌릴 상태는 지역 변수 대신 호출 정보에 둠 (재귀 호출 한번마다 쓰는 스택을 줄여서, 깊은 재귀에서도 허용되는 식의 깊이가 줄지 않도록)
+        CallFrame frame = begin_call(body , args);
         try
         {
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
+                next_statement();
                 var ret = execute_line(CurrentExecuteLine , true);
                 if (ret is ReturnInfo ri)
-                    return ri.value;
+                    return frame.Result = ri.value;
                 if (ret is GrammarError error)
                     throw new GrammarErrorException(error);
             }
@@ -759,11 +809,36 @@ public partial class Interpreter : IDisposable
         }
         finally
         {
-            current = caller;
-            inline_frame = outer_frame;
-            frames.Pop();
-            CurrentExecuteLine = current_line;
+            end_call(frame);
         }
+    }
+    CallFrame begin_call(Scope body , object?[] args)
+    {
+        CallFrame frame = new(args , inline_depth) {
+            Line = CurrentExecuteLine , Caller = current , OuterInline = inline_frame ,
+            Mark = roots.Count , Floor = statement_floor
+        };
+        frames.Push(frame);
+        //호출한 줄의 영역은 C# 스택에만 있으므로 메모리 사용량을 잴 때 포함 (메모리 한도가 없다면 재지 않으므로 생략)
+        if (memory_limited)
+            roots.Add(current);
+        statement_floor = roots.Count;
+        current = body;
+        inline_frame = null;
+        return frame;
+    }
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    void end_call(CallFrame frame)
+    {
+        current = frame.Caller;
+        inline_frame = frame.OuterInline;
+        frames.Pop();
+        CurrentExecuteLine = frame.Line;
+        if (roots.Count > frame.Mark)
+            roots.RemoveRange(frame.Mark , roots.Count - frame.Mark);
+        statement_floor = frame.Floor;
+        if (frame.Result is not null)
+            hold_result(frame.Result);
     }
     //[실험] 인라이닝 ---
     //param 줄들과 return 한 줄로만 된 함수의 모양 (func 줄 → 모양, 인라인할수 없다면 null)
@@ -980,15 +1055,22 @@ public partial class Interpreter : IDisposable
                 break;
             }
             object?[] outer_args = inline_args;
+            int direct_mark = hold_roots(out int direct_floor);
+            if (memory_limited)
+            {
+                roots.Add(caller);
+                roots.Add(outer_args);
+            }
             //파라미터가 아닌 이름은 함수를 만든 영역에서 찾음 (함수 영역에는 파라미터만 있으므로 결과가 같음)
             current = function.Scope;
             inline_args = args;
             inline_frame = shape;
             inline_depth++;
+            object? direct_result = null;
             try
             {
                 CurrentExecuteLine = shape.Return;
-                return direct();
+                return direct_result = direct();
             }
             finally
             {
@@ -997,13 +1079,22 @@ public partial class Interpreter : IDisposable
                 inline_frame = outer_frame;
                 inline_depth--;
                 CurrentExecuteLine = current_line;
+                release_roots(direct_mark , direct_floor);
+                hold_result(direct_result);
             }
         }
         object?[] caller_args = inline_args;
+        int mark = hold_roots(out int floor);
+        if (memory_limited)
+        {
+            roots.Add(caller);
+            roots.Add(caller_args);
+        }
         current = new Scope(function.Scope);
         inline_args = args;
         inline_frame = null;
         inline_depth++;
+        object? result = null;
         try
         {
             foreach (var (line , index , name) in shape.Params)
@@ -1013,7 +1104,7 @@ public partial class Interpreter : IDisposable
             }
             CurrentExecuteLine = shape.Return;
             object?[] ret = compiled_line(shape.Return).Arguments();
-            return ret.Length is 0 ? null : ret[0];
+            return result = ret.Length is 0 ? null : ret[0];
         }
         finally
         {
@@ -1022,6 +1113,8 @@ public partial class Interpreter : IDisposable
             inline_frame = outer_frame;
             inline_depth--;
             CurrentExecuteLine = current_line;
+            release_roots(mark , floor);
+            hold_result(result);
         }
     }
 
