@@ -1,0 +1,30 @@
+#!dump p r
+struct point
+	param x
+	param y
+endstruct
+func take
+	param a
+	param b
+	a.x = 50
+	b.y = 60
+	if a.x == b.y - 10
+		throw a
+	end
+	return a
+endfunc
+p = point 1 2
+try
+	r = take p p
+catch e
+	console.writeline e
+	r = e
+tried
+console.writeline p
+console.writeline r
+try
+	r = take (point 3 4) p
+catch e
+	r = e
+tried
+console.writeline r

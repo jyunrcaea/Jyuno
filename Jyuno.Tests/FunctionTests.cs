@@ -414,7 +414,7 @@ public class FunctionTests
     [Fact]
     public void InfiniteRecursion_Throws()
     {
-        var error = Assert.Throws<JyunoException>(() => Script.Run("func f", "  f", "endfunc", "f"));
+        var error = Assert.Throws<JyunoLimitException>(() => Script.Run("func f", "  f", "endfunc", "f"));
         Assert.Contains("너무 깊습니다", error.Message);
     }
 

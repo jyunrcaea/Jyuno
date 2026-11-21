@@ -1,0 +1,27 @@
+#!dump e x log
+log = list
+func risky
+	param k
+	for i (array 1 2 3)
+		try
+			if i == k
+				throw (list i k)
+			end
+			list.push log i
+		catch e
+			list.push log ("in " + (string e))
+			if k == 2
+				throw
+			end
+		tried
+	end
+	return k
+endfunc
+for k (array 1 2 3)
+	try
+		x = risky k
+	catch e
+		list.push log ("out " + (string e))
+	tried
+end
+console.writeline log

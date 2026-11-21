@@ -58,7 +58,7 @@ internal static class Values
     internal static void EnsureStack(string message)
     {
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            throw new JyunoException(message);
+            throw new JyunoLimitException(message);
     }
 
     //정수형 값이라면 long으로 꺼냄 (박싱된 long을 (int)로 캐스팅하면 예외가 나므로)

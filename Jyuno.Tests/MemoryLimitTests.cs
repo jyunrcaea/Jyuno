@@ -69,7 +69,7 @@ public class MemoryLimitTests
         Runtime runtime = new() { DefaultMemoryLimit = 16 * MB };
         Interpreter limited = runtime.Create(new[] { "x = array.new 100000000 0" });
         Assert.Equal(16 * MB , limited.MemoryLimit);
-        Assert.Throws<JyunoException>(() => limited.Run());
+        Assert.Throws<JyunoLimitException>(() => limited.Run());
 
         Interpreter own = runtime.Create(new[] { "x = array.new 10000000 0" , "return (length x)" });
         own.MemoryLimit = 0;

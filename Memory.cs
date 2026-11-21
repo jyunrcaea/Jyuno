@@ -1,11 +1,11 @@
-using Jyuno.Language;
+﻿using Jyuno.Language;
 using System.Collections;
 
 namespace Jyuno;
 
 //메모리 한도와 한 줄 안의 실행 중단 (1.7.0부터)
 //
-//메모리 한도: 스크립트가 붙잡고 있는 값(변수, 반복문 상태, 호출 인자, 구조체 값)의 크기를 가끔 재서, 한도를 넘으면 JyunoException
+//메모리 한도: 스크립트가 붙잡고 있는 값(변수, 반복문 상태, 호출 인자, 구조체 값)의 크기를 가끔 재서, 한도를 넘으면 JyunoLimitException (catch로 잡을수 없음)
 //- 언제 잴지는 .NET이 스레드마다 세는 할당량(GC.GetAllocatedBytesForCurrentThread, 호출 한번에 약 1.5ns)으로 정함
 //  반복문의 다음 반복, 함수 호출, 큰 값을 만드는 내장 함수에서 할당량을 읽고, 지난번에 잰 뒤로 일정량(step) 이상 할당했을 때만 잼
 //- 할당량은 버려진 값(가비지)도 세므로 그것만으로는 판단하지 않고, 붙잡고 있는 값을 따라가서 크기를 더함 (공유된 값은 한번만)
@@ -22,7 +22,7 @@ public partial class Interpreter
     /// <summary>
     /// 이 인터프리터의 스크립트가 붙잡고 있을수 있는 메모리의 대략적인 최대 크기 (바이트, 1.7.0부터). 0이면 제한하지 않습니다.
     /// 따로 정하지 않았다면 <see cref="Runtime.DefaultMemoryLimit"/>를 따릅니다.
-    /// 넘으면 <see cref="JyunoException"/>이 발생합니다. (붙잡고 있던 값은 인터프리터를 버려야 GC가 회수합니다)
+    /// 넘으면 <see cref="JyunoLimitException"/>(<see cref="JyunoException"/>의 하위 클래스, 스크립트의 catch로 잡을수 없음)이 발생합니다. (붙잡고 있던 값은 인터프리터를 버려야 GC가 회수합니다)
     /// </summary>
     public long MemoryLimit
     {
@@ -138,7 +138,7 @@ public partial class Interpreter
         memory_baseline = GC.GetAllocatedBytesForCurrentThread();
         memory_next = memory_baseline + memory_step(limit , live);
         if (limit > 0 && live + extra > limit)
-            throw new JyunoException(extra > 0
+            throw new JyunoLimitException(extra > 0
                 ? $"메모리 한도를 넘었습니다. (한도 {mib(limit)}, 사용중 약 {mib(live)}, 새로 만들 값 약 {mib(extra)})"
                 : $"메모리 한도를 넘었습니다. (한도 {mib(limit)}, 사용중 약 {mib(live)})");
     }
