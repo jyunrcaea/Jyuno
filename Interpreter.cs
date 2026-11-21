@@ -106,18 +106,25 @@ public partial class Interpreter : IDisposable
         public NameSite(string name)
         {
             Name = name;
-            //멤버 이름일수 있다면 점 앞의 이름들 (a.b.c → a, a.b)
-            List<string>? prefixes = null;
+            //멤버 이름일수 있는지 (a.b.c → 점 앞의 이름 a, a.b 중 하나에 구조체 값이 있다면)
+            //1.7.0부터 점 앞의 이름을 모두 만들어두지 않음 (점이 많은 긴 이름은 길이의 제곱만큼 메모리를 썼음)
             for (int dot = name.IndexOf('.') ; dot >= 0 ; dot = name.IndexOf('.' , dot + 1))
             {
                 if (dot > 0 && dot < name.Length - 1)
-                    (prefixes ??= new()).Add(name[..dot]);
+                {
+                    Member = true;
+                    break;
+                }
             }
-            Prefixes = prefixes?.ToArray();
+            int first = name.IndexOf('.');
+            if (first > 0 && first < name.Length - 1)
+                First = name[..first];
         }
         public readonly string Name;
-        //점이 들어간 이름이라면 점 앞의 이름들 (그 이름의 변수에 구조체 값이 있다면 멤버 이름일수 있음)
-        public readonly string[]? Prefixes;
+        //점이 들어간 이름이라면 멤버 이름일수 있음 (그 점 앞의 이름의 변수에 구조체 값이 있다면)
+        public readonly bool Member;
+        //첫 점 앞의 이름 (점이 들어간 이름이 없는 영역에서는 이 이름만 변수일수 있음, 이름이 점으로 시작한다면 null)
+        public readonly string? First;
         //1단계: 같은 영역에서 다시 찾는 경우 (while 문 등)
         public Scope? Scope;
         public long ScopeVersion, Version;
@@ -148,7 +155,7 @@ public partial class Interpreter : IDisposable
         }
         Scope? parent = scope.Parent;
         if (parent is not null && site.Parent == parent && site.ParentVersion == bindings_version && !scope.Variables.ContainsKey(site.Name)
-            && !(site.Prefixes is not null && find_member(scope , site , out _)))
+            && !(site.Member && find_member(scope , site , out _)))
         {
             holder = site.ParentHolder;
             remember(site , scope , holder);
@@ -160,7 +167,7 @@ public partial class Interpreter : IDisposable
     {
         Scope scope = current;
         string name = site.Name;
-        if (scope.Variables.TryGetValue(name , out holder) || (site.Prefixes is not null && find_member(scope , site , out holder)))
+        if (scope.Variables.TryGetValue(name , out holder) || (site.Member && find_member(scope , site , out holder)))
         {
             remember(site , scope , holder);
             return true;
@@ -170,7 +177,7 @@ public partial class Interpreter : IDisposable
         {
             //이 영역이 바뀌면 이 결과도 바뀔수 있음
             outer.Shared = true;
-            if (outer.Variables.TryGetValue(name , out holder) || (site.Prefixes is not null && find_member(outer , site , out holder)))
+            if (outer.Variables.TryGetValue(name , out holder) || (site.Member && find_member(outer , site , out holder)))
             {
                 found = true;
                 break;
@@ -279,6 +286,9 @@ public partial class Interpreter : IDisposable
     {
         int current = CurrentExecuteLine;
         CurrentExecuteLine = line;
+        Interpreter? outer = enter();
+        int mark = hold_roots(out int floor);
+        statement_floor = mark;
         try
         {
             materialize_inline();
@@ -297,13 +307,19 @@ public partial class Interpreter : IDisposable
         finally
         {
             CurrentExecuteLine = current;
+            release_roots(mark , floor);
+            leave(outer);
         }
     }
     //예외가 Run()/ExecuteLine() 밖으로 나가기 전에 오류가 난 줄을 기록함 (예외 필터는 finally보다 먼저 실행되므로 가장 안쪽의 줄을 알수 있음, 예외를 잡지는 않음)
     bool mark_error(Exception e)
     {
-        if (e is GrammarErrorException)
+        //ttl의 제한 시간이 지난 것은 오류가 아님 (C# 함수가 ttl 안에서 Run()을 다시 호출했다면 그 밖으로 지나갈수 있음)
+        if (e is GrammarErrorException or TtlExpiredException)
             return false;
+        //던진 구조체 값은 반환값처럼 인터프리터 밖으로 나간 값
+        if (e is JyunoThrownException thrown)
+            escape(thrown.Value);
         int line = CurrentExecuteLine;
         if (e is JyunoException jyuno && jyuno.Line < 0)
             jyuno.Line = line;
@@ -336,10 +352,19 @@ public partial class Interpreter : IDisposable
         top_repeat_counts.Clear();
         top_for_states.Clear();
         current = top;
+        Interpreter? outer = enter();
+        int mark = hold_roots(out int floor);
+        //C# 함수에서 Run()을 호출했다면 그 함수를 호출한 줄의 영역
+        roots.Add(caller_scope);
+        statement_floor = roots.Count;
         try
         {
+            //ttl 안에서 C# 함수가 Run()을 다시 호출했다면 그 실행도 시간 제한을 받음 (Ttl.cs)
+            if (ttl is not null)
+                return run_top_watched(start , end);
             for (CurrentExecuteLine = start ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
+                next_statement();
                 var ret = execute_line(CurrentExecuteLine , true);
                 if (ret is ReturnInfo ri)
                 {
@@ -373,6 +398,8 @@ public partial class Interpreter : IDisposable
                 frames.Pop();
                 inline_depth++;
             }
+            release_roots(mark , floor);
+            leave(outer);
         }
     }
     object? execute_line(int line , bool flow)
@@ -420,6 +447,14 @@ public partial class Interpreter : IDisposable
         public readonly Scope Outer;
         public int Index;
     }
+    //for 문의 순회할 원소를 만들기 전에 메모리 한도를 확인 (문자열은 글자마다 한 글자 문자열 하나)
+    static void reserve_for(object? source)
+    {
+        if (source is string chars)
+            Reserve(chars.Length * 40L + 32);
+        else if (source is System.Collections.IList list)
+            ReserveItems(list.Count);
+    }
     //반복 한번을 위한 새 영역을 만들고 원소를 변수에 넣음
     void enter_for(ForState state)
     {
@@ -451,6 +486,9 @@ public partial class Interpreter : IDisposable
             declare_local(compiled);
             return null;
         }
+        //던지기 (실행 위치를 옮기지 않으므로 ExecuteLine()에서도 사용 가능, Try.cs)
+        if (keyword is KeywordType.Throw)
+            return throw_value(compiled , line);
         //나머지 키워드는 실행 위치를 옮기므로 Run()으로 실행할 때만 사용 가능
         if (!flow)
             throw new JyunoException($"'{keyword.ToString().ToLowerInvariant()}' 키워드는 Run()으로 실행할 때만 사용할수 있습니다.");
@@ -475,9 +513,14 @@ public partial class Interpreter : IDisposable
                 //함수 안팎으로는 이동할수 없음
                 if ((goto_line < scripts.Count ? map.Owner[goto_line] : -1) != map.Owner[line])
                     throw new JyunoException("goto로 함수 안팎을 넘나들수 없습니다.");
+                //try/catch 본문 안쪽으로는 이동할수 없음 (같은 본문이나 바깥 블록으로는 가능, 1.7.0부터)
+                if (!map.CanEnter(line , (int)goto_line))
+                    throw new JyunoException("goto로 try/catch 블록 안쪽으로 들어갈수 없습니다.");
                 //goto로 빠져나가는 for 문은 안쪽부터 정리 (마지막에 가장 바깥 for 문의 바깥 영역으로 되돌아감)
                 foreach (int for_line in for_states.Keys.Where(o => !(o < goto_line && goto_line <= map.Pair[o])).OrderByDescending(o => o).ToList())
                     exit_for(for_line);
+                //goto로 만든 반복문도 반복문의 끝(end)처럼 메모리 사용량을 확인
+                poll_memory();
                 jump((int)goto_line);
                 break;
             //만약
@@ -512,6 +555,8 @@ public partial class Interpreter : IDisposable
                 break;
             case KeywordType.End:
                 int opener = map.Pair[line];
+                //반복문의 다음 반복: 지난번에 잰 뒤로 많이 할당했다면 메모리 사용량을 다시 잼 (if의 end에서도 확인하지만 비용은 같음)
+                poll_memory();
                 switch (keyword_of(opener))
                 {
                     //while은 조건을 다시 검사
@@ -560,6 +605,7 @@ public partial class Interpreter : IDisposable
                 var source = compiled.Arguments();
                 if (source.Length is not 1)
                     throw new JyunoException("for 다음에는 변수 이름과 순회할 값 하나만 와야 합니다.");
+                reserve_for(source[0]);
                 object?[] items = source[0] switch {
                     string text => text.Select(c => (object?)c.ToString()).ToArray(),
                     //순회 도중 컬렉션이 바뀌어도 영향을 받지 않도록 복사
@@ -616,6 +662,21 @@ public partial class Interpreter : IDisposable
             case KeywordType.EndFunc:
             case KeywordType.EndStruct:
                 break;
+            //시간 제한 블록: 블록이 끝날 때까지 이 줄에서 실행함 (Ttl.cs)
+            case KeywordType.Ttl:
+                return run_ttl(compiled , line , map);
+            //ttl을 거치지 않고 들어온 블록(goto 등)의 끝은 아무것도 하지 않음 (ttl을 거쳤다면 run_ttl이 이 줄을 건너뜀)
+            case KeywordType.EndTtl:
+                break;
+            //try 블록: 블록이 끝날 때까지 이 줄에서 실행함 (Try.cs)
+            case KeywordType.Try:
+                return run_try(line , map);
+            //try 블록 밖에서 catch 줄에 왔다면(Run(시작 줄) 등) try 본문이 끝난 것과 같음
+            case KeywordType.Catch:
+                jump(map.Pair[line] + 1);
+                break;
+            case KeywordType.Tried:
+                break;
         }
         return null;
     }
@@ -662,6 +723,13 @@ public partial class Interpreter : IDisposable
         public readonly int InlineDepth;
         public readonly Dictionary<int , long> RepeatCounts = new();
         public readonly Dictionary<int , ForState> ForStates = new();
+        //호출이 끝나면 되돌릴 상태: 호출한 줄, 호출한 쪽의 영역, 진행중이던 인라인된 호출
+        public int Line;
+        public Scope Caller = null!;
+        public InlineShape? OuterInline;
+        //메모리 한도: 호출 전의 roots 위치와 statement_floor, 돌려준 값 (Memory.cs)
+        public int Mark, Floor;
+        public object? Result;
     }
     Stack<CallFrame> frames = new();
     //무한 재귀로 프로그램이 죽지 않도록 제한 (기본값, 인터프리터마다 CallDepthLimit으로 바꿀수 있음)
@@ -670,9 +738,12 @@ public partial class Interpreter : IDisposable
     void check_call_depth()
     {
         if (frames.Count + inline_depth >= call_depth_limit)
-            throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {call_depth_limit}번)");
+            throw new JyunoLimitException($"함수 호출이 너무 깊습니다. (최대 {call_depth_limit}번)");
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            throw new JyunoException("함수 호출이 너무 깊어서 스택이 부족합니다.");
+            throw new JyunoLimitException("함수 호출이 너무 깊어서 스택이 부족합니다.");
+        //인라인된 호출은 줄을 실행하지 않으므로, 한 줄 안에서 끝나지 않는 재귀도 멈출수 있도록 호출마다 취소를 확인 (1.7.0부터)
+        check_cancel();
+        poll_memory();
     }
 
     //스크립트에서 func로 만든 함수
@@ -713,10 +784,18 @@ public partial class Interpreter : IDisposable
         //C# 프로그램에서의 호출: 주고받는 값은 인터프리터 밖의 값
         public object? Execute(params object?[] args)
         {
-            escape(args);
-            object? result = Call(args);
-            escape(result);
-            return result;
+            Interpreter? outer = interpreter.enter();
+            try
+            {
+                escape(args);
+                object? result = Call(args);
+                escape(result);
+                return result;
+            }
+            finally
+            {
+                leave(outer);
+            }
         }
     }
     //스크립트에서 함수를 호출 (C# 함수라면 인자와 반환값은 인터프리터 밖으로 나갔다 들어온 값)
@@ -732,6 +811,8 @@ public partial class Interpreter : IDisposable
                 escape(args);
                 object? result = function.Execute(args);
                 escape(result);
+                if (function is NativeFunction { Host: true })
+                    after_host_call(result);
                 return result;
         }
     }
@@ -739,19 +820,19 @@ public partial class Interpreter : IDisposable
     object? call_function(int line , int end , Scope body , object?[] args)
     {
         check_call_depth();
-        int current_line = CurrentExecuteLine;
-        Scope caller = current;
-        InlineShape? outer_frame = inline_frame;
-        frames.Push(new CallFrame(args , inline_depth));
-        current = body;
-        inline_frame = null;
+        //돌아올 때 되돌릴 상태는 지역 변수 대신 호출 정보에 둠 (재귀 호출 한번마다 쓰는 스택을 줄여서, 깊은 재귀에서도 허용되는 식의 깊이가 줄지 않도록)
+        CallFrame frame = begin_call(body , args);
         try
         {
+            //ttl 안에서 호출한 함수라면 줄마다 시간 제한을 확인하는 반복문으로 실행 (Ttl.cs)
+            if (ttl is not null)
+                return frame.Result = call_watched(line , end);
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
+                next_statement();
                 var ret = execute_line(CurrentExecuteLine , true);
                 if (ret is ReturnInfo ri)
-                    return ri.value;
+                    return frame.Result = ri.value;
                 if (ret is GrammarError error)
                     throw new GrammarErrorException(error);
             }
@@ -759,11 +840,36 @@ public partial class Interpreter : IDisposable
         }
         finally
         {
-            current = caller;
-            inline_frame = outer_frame;
-            frames.Pop();
-            CurrentExecuteLine = current_line;
+            end_call(frame);
         }
+    }
+    CallFrame begin_call(Scope body , object?[] args)
+    {
+        CallFrame frame = new(args , inline_depth) {
+            Line = CurrentExecuteLine , Caller = current , OuterInline = inline_frame ,
+            Mark = roots.Count , Floor = statement_floor
+        };
+        frames.Push(frame);
+        //호출한 줄의 영역은 C# 스택에만 있으므로 메모리 사용량을 잴 때 포함 (메모리 한도가 없다면 재지 않으므로 생략)
+        if (memory_limited)
+            roots.Add(current);
+        statement_floor = roots.Count;
+        current = body;
+        inline_frame = null;
+        return frame;
+    }
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    void end_call(CallFrame frame)
+    {
+        current = frame.Caller;
+        inline_frame = frame.OuterInline;
+        frames.Pop();
+        CurrentExecuteLine = frame.Line;
+        if (roots.Count > frame.Mark)
+            roots.RemoveRange(frame.Mark , roots.Count - frame.Mark);
+        statement_floor = frame.Floor;
+        if (frame.Result is not null)
+            hold_result(frame.Result);
     }
     //[실험] 인라이닝 ---
     //param 줄들과 return 한 줄로만 된 함수의 모양 (func 줄 → 모양, 인라인할수 없다면 null)
@@ -955,6 +1061,9 @@ public partial class Interpreter : IDisposable
     object? call_inline(JyunoFunction function , InlineShape shape , object?[] args)
     {
         check_call_depth();
+        //ttl 안에서의 호출은 줄을 실행하지 않으므로 호출마다 시간 제한을 확인
+        if (ttl is not null)
+            check_ttl();
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         if (!shape.DirectCompiled)
@@ -980,15 +1089,22 @@ public partial class Interpreter : IDisposable
                 break;
             }
             object?[] outer_args = inline_args;
+            int direct_mark = hold_roots(out int direct_floor);
+            if (memory_limited)
+            {
+                roots.Add(caller);
+                roots.Add(outer_args);
+            }
             //파라미터가 아닌 이름은 함수를 만든 영역에서 찾음 (함수 영역에는 파라미터만 있으므로 결과가 같음)
             current = function.Scope;
             inline_args = args;
             inline_frame = shape;
             inline_depth++;
+            object? direct_result = null;
             try
             {
                 CurrentExecuteLine = shape.Return;
-                return direct();
+                return direct_result = direct();
             }
             finally
             {
@@ -997,13 +1113,22 @@ public partial class Interpreter : IDisposable
                 inline_frame = outer_frame;
                 inline_depth--;
                 CurrentExecuteLine = current_line;
+                release_roots(direct_mark , direct_floor);
+                hold_result(direct_result);
             }
         }
         object?[] caller_args = inline_args;
+        int mark = hold_roots(out int floor);
+        if (memory_limited)
+        {
+            roots.Add(caller);
+            roots.Add(caller_args);
+        }
         current = new Scope(function.Scope);
         inline_args = args;
         inline_frame = null;
         inline_depth++;
+        object? result = null;
         try
         {
             foreach (var (line , index , name) in shape.Params)
@@ -1013,7 +1138,7 @@ public partial class Interpreter : IDisposable
             }
             CurrentExecuteLine = shape.Return;
             object?[] ret = compiled_line(shape.Return).Arguments();
-            return ret.Length is 0 ? null : ret[0];
+            return result = ret.Length is 0 ? null : ret[0];
         }
         finally
         {
@@ -1022,6 +1147,8 @@ public partial class Interpreter : IDisposable
             inline_frame = outer_frame;
             inline_depth--;
             CurrentExecuteLine = current_line;
+            release_roots(mark , floor);
+            hold_result(result);
         }
     }
 
@@ -1038,7 +1165,8 @@ public partial class Interpreter : IDisposable
     //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
     internal sealed class BlockMap
     {
-        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc, struct ↔ endstruct
+        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc, struct ↔ endstruct, ttl ↔ endttl
+        //try → catch, catch → tried, tried → try
         public readonly int[] Pair;
         //블록 구조가 잘못된 줄의 오류 메시지
         public readonly string?[] Errors;
@@ -1050,7 +1178,27 @@ public partial class Interpreter : IDisposable
         public readonly bool[] ParamOnce;
         //struct 줄: 그 구조체 안에(구조체 함수 안 포함) 다른 struct가 있는지
         public readonly bool[] HasInnerStruct;
+        //각 줄이 속한 가장 안쪽 try 블록의 try 줄 (try 본문 또는 catch 본문, 같은 함수 안의 try만, 없다면 -1, 1.7.0부터)
+        //try/catch/tried 줄 자신은 바깥 블록에 속함 (Region[try 줄]이 바깥 try)
+        public readonly int[] Region;
+        //Region의 try 블록 중 catch 본문(catch와 tried 사이)에 있는지
+        public readonly bool[] InCatch;
         public int Count => Pair.Length;
+
+        //goto로 from 줄에서 to 줄로 이동할수 있는지: try/catch 본문 안쪽으로 들어가지 않아야 함 (같은 본문이거나 바깥 블록)
+        public bool CanEnter(int from , int to)
+        {
+            if (to >= Count || Region[to] < 0)
+                return true;
+            int target = Region[to];
+            bool target_catch = InCatch[to];
+            for (int t = Region[from] , c = InCatch[from] ? 1 : 0 ; t >= 0 ; c = InCatch[t] ? 1 : 0 , t = Region[t])
+            {
+                if (t == target && (c == 1) == target_catch)
+                    return true;
+            }
+            return false;
+        }
 
         public BlockMap(List<CommandLine> scripts) : this(scripts.Select(o => o.tokens).ToArray()) { }
 
@@ -1062,6 +1210,8 @@ public partial class Interpreter : IDisposable
             ParamIndex = new int[lines.Count];
             ParamOnce = new bool[lines.Count];
             HasInnerStruct = new bool[lines.Count];
+            Region = new int[lines.Count];
+            InCatch = new bool[lines.Count];
             HashSet<int> has_goto = new();
             Array.Fill(Pair , -1);
             Stack<int> opened = new();
@@ -1087,20 +1237,64 @@ public partial class Interpreter : IDisposable
                     Errors[line] = "struct 키워드는 endstruct 키워드로 종료 표시가 있어야 합니다.";
                     return;
                 }
+                if (keyword_at(line) is KeywordType.Ttl)
+                {
+                    Errors[line] = "ttl 키워드는 endttl 키워드로 종료 표시가 있어야 합니다.";
+                    return;
+                }
+                if (keyword_at(line) is KeywordType.Try)
+                {
+                    Errors[line] = "try 키워드는 tried 키워드로 종료 표시가 있어야 합니다.";
+                    //catch가 있는 try라면 catch도 오류
+                    if (Pair[line] >= 0)
+                        Errors[Pair[line]] = Errors[line];
+                    return;
+                }
                 Errors[line] = "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.";
                 //else가 있는 if라면 else도 오류
                 if (Pair[line] >= 0)
                     Errors[Pair[line]] = Errors[line];
             }
 
+            //가장 안쪽의 try 줄 (같은 함수 안, 없다면 -1)
+            int innermost_try()
+            {
+                foreach (int o in opened)
+                {
+                    if (is_body(o))
+                        break;
+                    if (keyword_at(o) is KeywordType.Try)
+                        return o;
+                }
+                return -1;
+            }
+            //키워드 다음에 아무것도 없어야 하는 줄
+            void bare(int line , string keyword)
+            {
+                if (lines[line].Length > 1 && Errors[line] is null)
+                    Errors[line] = $"{keyword} 다음에는 아무것도 올수 없습니다.";
+            }
+
             for (int line = 0 ; line < lines.Count ; line++)
             {
                 Owner[line] = opened.FirstOrDefault(is_body , -1);
+                Region[line] = innermost_try();
+                //catch를 지난 try라면 catch 본문
+                InCatch[line] = Region[line] >= 0 && Pair[Region[line]] >= 0;
                 KeywordType? keyword = keyword_at(line);
                 if (keyword is null)
                     continue;
-                if (keyword is KeywordType.Func or KeywordType.Struct || Grammar.Conditionals.Contains(keyword.Value))
+                //catch/tried 줄은 try 줄처럼 바깥 블록에 속함 (goto로 이 줄에 오면 try 블록이 끝남)
+                if (keyword is KeywordType.Catch or KeywordType.Tried && Region[line] >= 0)
                 {
+                    int try_line = Region[line];
+                    Region[line] = Region[try_line];
+                    InCatch[line] = InCatch[try_line];
+                }
+                if (keyword is KeywordType.Func or KeywordType.Struct or KeywordType.Ttl or KeywordType.Try || Grammar.Conditionals.Contains(keyword.Value))
+                {
+                    if (keyword is KeywordType.Try)
+                        bare(line , "try");
                     if (keyword is KeywordType.Struct)
                     {
                         foreach (int o in opened)
@@ -1128,6 +1322,18 @@ public partial class Interpreter : IDisposable
                             Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다.";
                             break;
                         }
+                        //ttl은 endttl로 닫아야 함
+                        if (keyword_at(opener) is KeywordType.Ttl)
+                        {
+                            Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다. (ttl은 endttl로 닫아야 합니다)";
+                            break;
+                        }
+                        //try는 tried로 닫아야 함
+                        if (keyword_at(opener) is KeywordType.Try)
+                        {
+                            Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다. (try는 tried로 닫아야 합니다)";
+                            break;
+                        }
                         opened.Pop();
                         //else가 있는 if라면 else가 end를 가리킴
                         if (Pair[opener] >= 0)
@@ -1152,6 +1358,88 @@ public partial class Interpreter : IDisposable
                         Pair[func] = line;
                         Pair[line] = func;
                         break;
+                    case KeywordType.EndTtl:
+                        //가장 안쪽의 ttl (함수 밖의 ttl은 제외)
+                        int ttl_line = -1;
+                        foreach (int o in opened)
+                        {
+                            if (is_body(o))
+                                break;
+                            if (keyword_at(o) is KeywordType.Ttl)
+                            {
+                                ttl_line = o;
+                                break;
+                            }
+                        }
+                        if (ttl_line < 0)
+                        {
+                            Errors[line] = "endttl과 짝이 되는 ttl 키워드가 없습니다.";
+                            break;
+                        }
+                        //ttl 안에서 닫히지 않은 블록
+                        while (opened.Peek() != ttl_line)
+                            unclosed(opened.Pop());
+                        opened.Pop();
+                        Pair[ttl_line] = line;
+                        Pair[line] = ttl_line;
+                        break;
+                    case KeywordType.Catch:
+                    {
+                        //가장 안쪽 블록이 아직 catch가 없는 try여야 함
+                        if (opened.TryPeek(out int try_line) && keyword_at(try_line) is KeywordType.Try && Pair[try_line] < 0)
+                        {
+                            Pair[try_line] = line;
+                            Token[] tokens = lines[line];
+                            if (tokens.Length > 2 || (tokens.Length is 2 && tokens[1].type is not TokenType.Name))
+                                Errors[line] = "catch 다음에는 오류를 받을 변수 이름 하나만 올수 있습니다.";
+                        }
+                        else
+                            Errors[line] = "catch는 try와 tried 사이에 한번만 쓸수 있습니다.";
+                        break;
+                    }
+                    case KeywordType.Tried:
+                    {
+                        int try_line = innermost_try();
+                        if (try_line < 0)
+                        {
+                            Errors[line] = "tried와 짝이 되는 try 키워드가 없습니다.";
+                            break;
+                        }
+                        //try 안에서 닫히지 않은 블록
+                        while (opened.Peek() != try_line)
+                            unclosed(opened.Pop());
+                        opened.Pop();
+                        bare(line , "tried");
+                        if (Pair[try_line] < 0)
+                        {
+                            //catch가 없는 try (오류를 처리할 곳이 없음)
+                            Errors[try_line] = Errors[line] = "try와 tried 사이에는 catch가 있어야 합니다.";
+                            Pair[line] = try_line;
+                            break;
+                        }
+                        Pair[Pair[try_line]] = line;
+                        Pair[line] = try_line;
+                        break;
+                    }
+                    case KeywordType.Throw:
+                        //값 없는 throw: 처리중인 오류를 다시 던지므로 catch 본문 안에서만 (같은 함수 안)
+                        if (lines[line].Length is 1)
+                        {
+                            bool in_catch = false;
+                            foreach (int o in opened)
+                            {
+                                if (is_body(o))
+                                    break;
+                                if (keyword_at(o) is KeywordType.Try && Pair[o] >= 0)
+                                {
+                                    in_catch = true;
+                                    break;
+                                }
+                            }
+                            if (!in_catch)
+                                Errors[line] = "값 없는 throw는 catch와 tried 사이에서만 쓸수 있습니다. (처리중인 오류를 다시 던짐)";
+                        }
+                        break;
                     case KeywordType.Break:
                         //가장 안쪽 반복문 (함수 밖의 반복문은 제외, 반복문의 end는 아직 모르므로 나중에 연결)
                         int loop = -1;
@@ -1160,7 +1448,8 @@ public partial class Interpreter : IDisposable
                             KeywordType? kind = keyword_at(o);
                             if (kind is KeywordType.Func or KeywordType.Struct)
                                 break;
-                            if (kind is not KeywordType.If)
+                            //if, ttl, try는 반복문이 아니므로 건너뜀 (break로 ttl/try를 빠져나갈수 있음)
+                            if (kind is not (KeywordType.If or KeywordType.Ttl or KeywordType.Try))
                             {
                                 loop = o;
                                 break;
@@ -1187,7 +1476,8 @@ public partial class Interpreter : IDisposable
                             KeywordType? kind = keyword_at(o);
                             if (kind is KeywordType.Func or KeywordType.Struct)
                                 break;
-                            if (kind is not KeywordType.If)
+                            //ttl과 try는 다시 실행하지 않으므로 if와 같음
+                            if (kind is not (KeywordType.If or KeywordType.Ttl or KeywordType.Try))
                                 ParamOnce[line] = false;
                         }
                         break;

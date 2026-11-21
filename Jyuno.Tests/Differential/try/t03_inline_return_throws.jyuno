@@ -1,0 +1,30 @@
+#!dump s
+func bad
+	param p
+	throw p.x
+endfunc
+func one
+	param p
+	return p.x + (bad p)
+endfunc
+struct point
+	param x
+endstruct
+s = point 7
+try
+	console.writeline (one s)
+catch e
+	console.writeline ("caught " + e)
+tried
+func plus
+	param a
+	param b
+	return a.x + b.x
+endfunc
+try
+	console.writeline (plus s (point 1))
+	console.writeline (plus s 3)
+catch e
+	console.writeline e
+tried
+console.writeline (plus s s)

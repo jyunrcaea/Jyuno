@@ -17,11 +17,20 @@ public class Runtime
     }
     //인터프리터가 다른 스레드에서 읽을수 있으므로, 항상 lock (Global) 안에서 사용해야 함
     internal readonly VariableDictionary Global = new();
+    /// <summary>
+    /// 스크립트에서 호출할수 있는 C# 함수를 추가합니다.
+    /// <para>
+    /// 메모리 한도(<see cref="DefaultMemoryLimit"/>, <see cref="Interpreter.MemoryLimit"/>)는 C# 함수가 실행되는 동안 확인하지 않습니다.
+    /// 함수 안에서 큰 값을 만들거나 오래 반복한다면 함수가 직접 크기를 제한해 주세요.
+    /// 함수가 돌아온 뒤에는 다음 확인 지점(반복, 함수 호출 등)에서 다시 재며, 이때 함수가 이 스레드에서 할당한 양과 돌려준 문자열/배열/리스트는 포함되지만,
+    /// 다른 스레드에서 할당한 양이나 C# 객체(정적 필드, 캡처한 변수 등)에 붙잡아 둔 값은 세지 않습니다.
+    /// </para>
+    /// </summary>
     public bool AddFunction(string name,Func<object?[],object?> func)
     {
         lock (Global)
         {
-            return Global.AddFunction(name , func);
+            return Global.TryAdd(name , new NativeFunction(func) { Host = true });
         }
     }
     public bool AddVariable(string name,Func<object?> get, Action<object?> set)
@@ -60,6 +69,18 @@ public class Runtime
             return result;
         }
     }
+    /// <summary>
+    /// 이 런타임의 인터프리터마다 스크립트가 붙잡고 있을수 있는 메모리의 대략적인 최대 크기 (바이트, 1.7.0부터). 0(기본값)이면 제한하지 않습니다.
+    /// 인터프리터마다 따로 재고 따로 제한하며(합계가 아님), <see cref="Interpreter.MemoryLimit"/>를 정한 인터프리터는 그 값을 따릅니다.
+    /// 이미 만든 인터프리터에도 바로 적용됩니다.
+    /// </summary>
+    public long DefaultMemoryLimit
+    {
+        get => Volatile.Read(ref memory_limit);
+        set => Volatile.Write(ref memory_limit , value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value) , "메모리 한도는 0 이상이어야 합니다. (0은 제한 없음)"));
+    }
+    long memory_limit;
+
     //Dispose 하지 않은 인터프리터도 GC가 수거할수 있도록 약한 참조로 보관 (스레드 안전)
     readonly ConditionalWeakTable<Interpreter , object> interpreters = new();
     static readonly object alive = new();

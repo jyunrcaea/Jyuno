@@ -120,7 +120,14 @@ internal static class Collections
     //add 명령어: 첫 컬렉션 뒤에 나머지 인자를 이어붙임 (컬렉션은 한번만 펼침)
     public static IList Add(IList first , object?[] args , int start)
     {
-        List<object?> items = new(first.Count);
+        //만들기 전에 메모리 한도를 확인 (1.7.0부터, 원소마다 중간 리스트/박싱/결과를 합쳐 약 48바이트로 어림)
+        long total = first.Count;
+        for (int i = start ; i < args.Length ; i++)
+            total += args[i] is IList other_list ? other_list.Count : 1;
+        if (total > Array.MaxLength)
+            throw new JyunoException($"add: 원소가 너무 많습니다. ({total}개)");
+        Interpreter.Reserve(total * ItemCost);
+        List<object?> items = new((int)total);
         foreach (object? item in first)
             items.Add(item);
         for (int i = start ; i < args.Length ; i++)
@@ -135,12 +142,15 @@ internal static class Collections
                 items.Add(args[i]);
             }
         }
-        return create_like(first , items);
+        return Interpreter.Hold(create_like(first , items) , total * 8);
     }
+    //배열/리스트를 새로 만들때 원소 하나에 드는 어림값 (중간 리스트, 박싱된 값, 결과 컬렉션)
+    const long ItemCost = 48;
 
     //sub 명령어: 차집합 (first에서 remove에 있는 원소와 같은 원소를 모두 제거, 컬렉션이 아니라면 그 값 하나를 제거)
     public static IList Sub(IList first , object? remove)
     {
+        Interpreter.Reserve((first.Count + (remove is IList removing ? removing.Count : 1)) * ItemCost);
         HashSet<object?> set = new(SameComparer.Instance);
         if (remove is IList other)
         {
@@ -154,6 +164,7 @@ internal static class Collections
         List<object?> items = new(first.Count);
         foreach (object? item in first)
         {
+            Interpreter.Tick();
             if (!set.Contains(item))
                 items.Add(item);
         }
@@ -239,6 +250,7 @@ internal static class Collections
     //less/greater와 같은 기준으로 비교 (NaN은 가장 앞, 비교할수 없는 값이 섞여있다면 오류)
     static int compare(object? a , object? b)
     {
+        Interpreter.Tick();
         if (Values.Compare(a , b) is int order)
             return order;
         //Compare가 null을 돌려주는 경우는 NaN이 섞여있을 때뿐
@@ -274,6 +286,7 @@ internal static class Collections
     {
         IList list = Target(args , name);
         writable(list , name);
+        Interpreter.Reserve(list.Count * 16L);
         object?[] items = items_of(list);
         int sign = args.Length > 1 && Compiler.Parser.IsTrue(args[1]) ? -1 : 1;
         merge_sort(items , new object?[items.Length] , 0 , items.Length , sign);
@@ -286,6 +299,7 @@ internal static class Collections
     {
         IList list = Target(args , name);
         writable(list , name);
+        Interpreter.Reserve(list.Count * 8L);
         object?[] items = items_of(list);
         Array.Reverse(items);
         write_back(list , items);
@@ -297,6 +311,7 @@ internal static class Collections
     {
         IList list = Target(args , name);
         writable(list , name);
+        Interpreter.Reserve(list.Count * 8L);
         object?[] items = items_of(list);
         for (int i = items.Length - 1 ; i > 0 ; i--)
         {
@@ -315,6 +330,7 @@ internal static class Collections
             throw new JyunoException($"{name}: 찾을 값이 필요합니다.");
         for (int i = 0 ; i < list.Count ; i++)
         {
+            Interpreter.Tick();
             if (Values.Same(list[i] , args[1]))
                 return i;
         }
@@ -332,10 +348,11 @@ internal static class Collections
             throw new JyunoException($"{name}: 시작 인덱스가 필요합니다.");
         int start = integer_argument(args[1] , "시작 인덱스" , 0 , list.Count , name);
         int end = args.Length > 2 ? integer_argument(args[2] , "끝 인덱스" , start , list.Count , name) : list.Count;
+        Interpreter.Reserve((end - start) * ItemCost);
         List<object?> items = new(end - start);
         for (int i = start ; i < end ; i++)
             items.Add(list[i]);
-        return create_like(list , items);
+        return Interpreter.Hold(create_like(list , items) , (end - start) * 8L);
     }
 
     //array.join / list.join: 원소를 문자열로 바꿔서 구분자(생략하면 빈 문자열)로 이어붙임
@@ -343,10 +360,11 @@ internal static class Collections
     {
         IList list = Target(args , name);
         string separator = args.Length > 1 ? Values.Text(args[1]) : string.Empty;
+        Interpreter.Reserve(list.Count * 8L);
         string[] texts = new string[list.Count];
         for (int i = 0 ; i < texts.Length ; i++)
             texts[i] = Values.Text(list[i]);
-        return string.Join(separator , texts);
+        return Strings.Join(separator , texts);
     }
 
     //array.new / list.new: 길이가 length이고 모든 원소가 value(생략하면 null)인 배열/리스트
@@ -356,16 +374,19 @@ internal static class Collections
             throw new JyunoException($"{name}: 길이가 필요합니다.");
         int length = integer_argument(args[0] , "길이" , 0 , Array.MaxLength , name);
         object? value = args.Length > 1 ? args[1] : null;
+        //1.7.0부터 만들기 전에 메모리 한도를 확인 (원소를 채운 배열과 결과 컬렉션)
+        Interpreter.Reserve(length * 16L + 64);
         object?[] items = new object?[length];
         Array.Fill(items , value);
-        return array ? NewArray(items) : NewList(items);
+        return Interpreter.Hold<IList>(array ? NewArray(items) : NewList(items) , length * 8L);
     }
 
     //array.copy / list.copy: 같은 종류, 같은 원소 타입의 새 컬렉션 (얕은 복사)
     public static IList Copy(object?[] args , string name)
     {
         IList list = Target(args , name);
-        return create_like(list , new List<object?>(items_of(list)));
+        Interpreter.Reserve(list.Count * ItemCost);
+        return Interpreter.Hold(create_like(list , new List<object?>(items_of(list))) , list.Count * 8L);
     }
 
     //array.lastindexof / list.lastindexof: equal과 같은 기준으로 마지막으로 같은 원소의 인덱스 (없다면 -1)
@@ -376,6 +397,7 @@ internal static class Collections
             throw new JyunoException($"{name}: 찾을 값이 필요합니다.");
         for (int i = list.Count - 1 ; i >= 0 ; i--)
         {
+            Interpreter.Tick();
             if (Values.Same(list[i] , args[1]))
                 return i;
         }
@@ -391,6 +413,7 @@ internal static class Collections
         long count = 0;
         foreach (object? item in list)
         {
+            Interpreter.Tick();
             if (Values.Same(item , args[1]))
                 count++;
         }
@@ -401,14 +424,16 @@ internal static class Collections
     public static IList Distinct(object?[] args , string name)
     {
         IList list = Target(args , name);
+        Interpreter.Reserve(list.Count * ItemCost);
         HashSet<object?> seen = new(SameComparer.Instance);
         List<object?> items = new();
         foreach (object? item in list)
         {
+            Interpreter.Tick();
             if (seen.Add(item))
                 items.Add(item);
         }
-        return create_like(list , items);
+        return Interpreter.Hold(create_like(list , items) , items.Count * 8L);
     }
 
     //array.binary_search / list.binary_search: 오름차순으로 정렬된 컬렉션에서 값의 인덱스 (sort와 같은 기준)
@@ -506,10 +531,11 @@ internal static class Collections
             count = unchecked((ulong)(start - end) - 1) / unchecked((ulong)(-step)) + 1;
         if (count > (ulong)Array.MaxLength)
             throw new JyunoException($"{name}: 원소가 너무 많습니다. ({count}개)");
+        Interpreter.Reserve((long)count * (array ? 8 : 16) + 64);
         long[] items = new long[count];
         for (int i = 0 ; i < items.Length ; i++)
             items[i] = unchecked(start + i * step);
-        return array ? items : new List<long>(items);
+        return Interpreter.Hold<IList>(array ? items : new List<long>(items) , (long)count * 8);
     }
 
     //원소 타입에 맞게 변환 (list.push, list.insert)
@@ -530,6 +556,7 @@ internal static class Collections
         object?[] values = new object?[args.Length - 1];
         for (int i = 1 ; i < args.Length ; i++)
             values[i - 1] = fit(list , args[i] , name);
+        Interpreter.ReserveGrowth(list , values.Length);
         foreach (object? value in values)
             list.Add(value);
         return list;
@@ -555,6 +582,7 @@ internal static class Collections
         if (args.Length < 3)
             throw new JyunoException($"{name}: 리스트, 인덱스, 값이 필요합니다.");
         int index = integer_argument(args[1] , "인덱스" , 0 , list.Count , name);
+        Interpreter.ReserveGrowth(list , 1);
         list.Insert(index , fit(list , args[2] , name));
         return list;
     }

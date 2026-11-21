@@ -1,0 +1,9 @@
+func r
+	param n
+	return r (n + 1)
+endfunc
+try
+	r 0
+catch e
+	console.writeline "WRONG"
+tried

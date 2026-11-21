@@ -47,7 +47,7 @@ public class ReviewFixTests
     [Fact]
     public void DeeplyNestedList_ThrowsInsteadOfStackOverflow()
     {
-        var error = Assert.Throws<JyunoException>(() => RunSmallStack(Create(
+        var error = Assert.Throws<JyunoLimitException>(() => RunSmallStack(Create(
             "l = list" , "repeat 200000" , "m = list l" , "l = m" , "end" , "return (string l)")));
         Assert.Equal(5 , error.Line);
     }
@@ -69,7 +69,7 @@ public class ReviewFixTests
             "conditional" => string.Concat(Enumerable.Repeat("false ? 1 : " , 50000)) + "2",
             _ => Nest(20000 , "add 1 (" , "1" , ")"),
         };
-        var error = Assert.Throws<JyunoException>(() => RunSmallStack(Create("x = 1" , "return " + expression)));
+        var error = Assert.Throws<JyunoLimitException>(() => RunSmallStack(Create("x = 1" , "return " + expression)));
         Assert.Contains("너무 깊게" , error.Message);
         Assert.Equal(1 , error.Line);
     }
@@ -353,7 +353,7 @@ public class ReviewFixTests
     public void CallDepthLimit_CanBeChanged()
     {
         string[] lines = { "func f" , "param n" , "if (n > 0)" , "return (add 1 (f (n - 1)))" , "end" , "return 0" , "endfunc" , "return (f 500)" };
-        Assert.Throws<JyunoException>(() => Create(lines).Run());
+        Assert.Throws<JyunoLimitException>(() => Create(lines).Run());
         Interpreter interpreter = Create(lines);
         interpreter.CallDepthLimit = 1000;
         Assert.Equal(500L , RunOnThread(interpreter , 16 * 1024 * 1024));

@@ -1,0 +1,27 @@
+#!dump p e q
+struct point
+	param x
+	param y
+	func move
+		param d
+		x = x + d
+		if x > 5
+			throw this_is_unknown
+		end
+	endfunc
+endstruct
+p = point 1 2
+try
+	p.move 10
+catch e
+	console.writeline e
+tried
+console.writeline p
+q = point 0 0
+try
+	throw q
+catch e
+	e.x = 99
+tried
+console.writeline q
+console.writeline e

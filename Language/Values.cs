@@ -34,6 +34,14 @@ internal static class Values
         builder.Append('[');
         for (int i = 0 ; i < list.Count ; i++)
         {
+            //공유된 리스트를 여러번 담은 값은 결과가 매우 길어질수 있으므로, 취소와 메모리 한도를 확인 (1.7.0부터)
+            Interpreter.Tick();
+            if (builder.Length >= 1 << 18)
+            {
+                //만들고 있는 내용과 결과 문자열
+                Interpreter.ReserveString(builder.Length);
+                Interpreter.Reserve(builder.Length * 4L);
+            }
             if (i > 0)
                 builder.Append(", ");
             object? item = list[i];
@@ -50,7 +58,7 @@ internal static class Values
     internal static void EnsureStack(string message)
     {
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            throw new JyunoException(message);
+            throw new JyunoLimitException(message);
     }
 
     //정수형 값이라면 long으로 꺼냄 (박싱된 long을 (int)로 캐스팅하면 예외가 나므로)
@@ -174,7 +182,7 @@ internal static class Values
         }
         //문자열이 있다면 이어붙임 (null은 빈 문자열)
         if (a is string || b is string)
-            return Text(a) + Text(b);
+            return Interpreter.Concat(Text(a) , Text(b));
         return arithmetic(a , b , '+');
     }
     public static object? Multiply(object a , object b)
