@@ -1,0 +1,42 @@
+# master의 wiki 폴더를 GitHub 위키(Jyuno.wiki)에 올림
+# 위키 문서는 저장소의 wiki 폴더에서 고치고 PR로 리뷰함 (위키에서 바로 고친 페이지는 다음에 올라갈 때 덮어써짐)
+# wiki 폴더에 없는 위키 페이지는 지우지 않음
+name: Wiki
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/wiki.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # 위키 저장소에 푸시
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 위키에 올리기
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git clone "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" "$RUNNER_TEMP/wiki"
+          cp -R wiki/. "$RUNNER_TEMP/wiki/"
+          cd "$RUNNER_TEMP/wiki"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "바뀐 페이지가 없습니다."
+            exit 0
+          fi
+          git commit -m "Sync wiki from ${GITHUB_SHA::7}"
+          git push

@@ -1,0 +1,8 @@
+How the interpreter runs lines, and the built-in optimizations that make it faster.
+
+- Each line is compiled into a closure tree only once, the first time it runs. After that, the compiled tree is executed without re-parsing the tokens.
+- Built-in function calls whose arguments are all constants, such as ``(add 1 2)`` (``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``, ``int``, ``double``, ``string``, ``bool``, ``length``, ``math.*``), are computed ahead of time at compile time.  
+  If the script redefines the same name (``func add``, ``local add``) or removes it (``add =``), the function is called normally instead of using the precomputed value. Computations that fail at run time (such as ``div 1 0``) and computations that create arrays/lists are not precomputed.
+- Name (variable/function) lookups are cached at each place the name appears, and are looked up again automatically when a variable is created, removed or replaced.
+- Where a built-in function (``add``, ``sub``, ``mul``, ``div``, ``mod``, ``equal``, ``less``, ``greater``, ``and``, ``or``, ``not``) is called with 1-3 arguments, such as ``add i 1``, it only checks at run time that the name still refers to the same built-in function, and then computes the result directly without an argument array. (Since 1.3.4)  
+  If the value can't be computed directly (``div 1 0``, adding a string and a number, etc.) or the name was redefined/removed, the function is called normally, so results and errors are the same. When an ``if``/``while`` has a single condition, it is evaluated as true/false directly without an argument array.
