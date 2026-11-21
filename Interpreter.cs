@@ -783,6 +783,8 @@ public partial class Interpreter : IDisposable
                 escape(args);
                 object? result = function.Execute(args);
                 escape(result);
+                if (function is NativeFunction { Host: true })
+                    after_host_call(result);
                 return result;
         }
     }

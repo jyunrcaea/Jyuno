@@ -66,7 +66,7 @@ public class MemoryLimitTests
     [Fact]
     public void RuntimeLimit_IsDefault_AndInterpreterOverrides()
     {
-        Runtime runtime = new() { MemoryLimit = 16 * MB };
+        Runtime runtime = new() { DefaultMemoryLimit = 16 * MB };
         Interpreter limited = runtime.Create(new[] { "x = array.new 100000000 0" });
         Assert.Equal(16 * MB , limited.MemoryLimit);
         Assert.Throws<JyunoException>(() => limited.Run());
@@ -78,10 +78,10 @@ public class MemoryLimitTests
 
         //이미 만든 인터프리터에도 적용
         Interpreter later = runtime.Create(new[] { "x = array.new 10000000 0" , "return (length x)" });
-        runtime.MemoryLimit = 0;
+        runtime.DefaultMemoryLimit = 0;
         Assert.Equal(10000000L , later.Run());
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => runtime.MemoryLimit = -1);
+        Assert.Throws<ArgumentOutOfRangeException>(() => runtime.DefaultMemoryLimit = -1);
         Assert.Throws<ArgumentOutOfRangeException>(() => own.MemoryLimit = -1);
     }
 
@@ -100,6 +100,40 @@ public class MemoryLimitTests
         LimitError(interpreter);
         interpreter.MemoryLimit = 0;
         Assert.Equal(3L , interpreter.ExecuteLine("(add 1 2)"));
+    }
+
+    //──────── 프로그램이 추가한 C# 함수 ────────
+
+    [Fact]
+    public void HostFunctionValues_AreCheckedAfterReturn()
+    {
+        //C# 함수 안에서 만든 값(이 스레드): 돌아온 뒤 리스트에 쌓이면 한도에서 멈춤
+        Runtime runtime = new() { DefaultMemoryLimit = 32 * MB };
+        runtime.AddFunction("host.chunk" , args => new List<object?>(Enumerable.Range(0 , 20000).Select(i => (object?)(long)i)));
+        LimitError(runtime.Create(new[] { "keep = list" , "while true" , "list.push keep (host.chunk)" , "end" }));
+    }
+
+    [Fact]
+    public void HostFunctionValue_FromOtherThread_IsCheckedRightAfterReturn()
+    {
+        //다른 스레드에서 만든 큰 문자열(이 스레드의 할당량에는 없음): 돌아오자마자 크기를 셈
+        Runtime runtime = new() { DefaultMemoryLimit = 32 * MB };
+        runtime.AddFunction("host.big" , args => Task.Run(() => new string('x' , 20_000_000)).GetAwaiter().GetResult());
+        Interpreter interpreter = runtime.Create(new[] { "x = host.big" , "return 1" });
+        LimitError(interpreter);
+        Assert.True(interpreter.MemoryUsage >= 38 * MB , $"{interpreter.MemoryUsage}");
+        //한도가 충분하다면 그대로 실행
+        runtime.DefaultMemoryLimit = 128 * MB;
+        Assert.Equal(20000000L , runtime.Create(new[] { "x = host.big" , "return (length x)" }).Run());
+    }
+
+    [Fact]
+    public void HostFunctionGarbage_DoesNotCount()
+    {
+        //C# 함수가 만들고 버린 값은 세지 않음 (돌아온 뒤 다시 재므로 한도에 걸리지 않음)
+        Runtime runtime = new() { DefaultMemoryLimit = 16 * MB };
+        runtime.AddFunction("host.work" , args => (long)new byte[4 * MB].Length);
+        Assert.Equal(400L * 4 * MB , runtime.Create(new[] { "s = 0" , "repeat 400" , "s = add s (host.work)" , "end" , "return s" }).Run());
     }
 
     //──────── 한도와 관계없는 최대 길이 ────────

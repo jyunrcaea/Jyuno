@@ -21,12 +21,12 @@ public partial class Interpreter
 {
     /// <summary>
     /// 이 인터프리터의 스크립트가 붙잡고 있을수 있는 메모리의 대략적인 최대 크기 (바이트, 1.7.0부터). 0이면 제한하지 않습니다.
-    /// 따로 정하지 않았다면 <see cref="Runtime.MemoryLimit"/>를 따릅니다.
+    /// 따로 정하지 않았다면 <see cref="Runtime.DefaultMemoryLimit"/>를 따릅니다.
     /// 넘으면 <see cref="JyunoException"/>이 발생합니다. (붙잡고 있던 값은 인터프리터를 버려야 GC가 회수합니다)
     /// </summary>
     public long MemoryLimit
     {
-        get => memory_limit ?? runtime.MemoryLimit;
+        get => memory_limit ?? runtime.DefaultMemoryLimit;
         set => memory_limit = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value) , "메모리 한도는 0 이상이어야 합니다. (0은 제한 없음)");
     }
     long? memory_limit;
@@ -55,7 +55,7 @@ public partial class Interpreter
         return outer;
     }
     static void leave(Interpreter? outer) => active = outer;
-    bool memory_limited => memory_limit is long limit ? limit != 0 : runtime.MemoryLimit != 0;
+    bool memory_limited => memory_limit is long limit ? limit != 0 : runtime.DefaultMemoryLimit != 0;
 
     //C# 스택에만 있어서 영역/호출 정보로는 닿을수 없는 값: 호출한 쪽의 영역과 인자, 지금 줄을 계산하는 도중에 만든 큰 값
     //(호출 한번 또는 줄 하나가 끝나면 그 동안 추가한 것을 지움)
@@ -67,6 +67,25 @@ public partial class Interpreter
     {
         if (result is string or System.Collections.IList or StructInstance && memory_limited)
             roots.Add(result);
+    }
+    //프로그램이 추가한 C# 함수가 돌아온 뒤 (C# 함수가 실행되는 동안에는 확인할 방법이 없음)
+    //함수가 이 스레드에서 할당한 양은 스레드의 할당량에 이미 들어 있으므로 바로 확인하고,
+    //돌려준 큰 값은 다른 스레드에서 만들었을수도 있으므로 이 스레드에서 할당한 것처럼 다음에 잴 시점을 당긴 뒤, 줄이 끝날 때까지 붙잡음
+    void after_host_call(object? result)
+    {
+        if (!memory_limited)
+            return;
+        long bytes = result switch {
+            string text => text.Length * 2L + 24,
+            System.Collections.IList list => list.Count * 8L + 32,
+            _ => 0
+        };
+        if (bytes >= HoldThreshold)
+        {
+            roots.Add(result);
+            memory_next -= bytes;
+        }
+        poll_memory();
     }
     //줄 하나를 실행하기 전에: 이전 줄을 계산하는 도중에 붙잡은 값을 놓음
     void next_statement()

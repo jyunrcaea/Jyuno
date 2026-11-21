@@ -18,6 +18,8 @@ public class NativeFunction : FunctionInterface
     internal Func<object?[] , bool>? Foldable { get; init; }
     //호출 자리 특화에서 인자 배열 없이 바로 계산할수 있는 내장 함수의 종류 (Compiler/IntrinsicCall.cs)
     internal Intrinsic Intrinsic { get; init; }
+    //프로그램이 Runtime.AddFunction으로 추가한 함수인지 (돌려준 큰 값을 메모리 한도에서 셈, 1.7.0부터)
+    internal bool Host { get; init; }
 }
 
 //호출 자리 특화로 바로 계산할수 있는 내장 함수
