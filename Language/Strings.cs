@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 
 namespace Jyuno.Language;
@@ -34,7 +34,7 @@ internal static class Strings
             string format = text(args , 0 , name);
             try
             {
-                return string.Format(CultureInfo.InvariantCulture , format , args[1..]);
+                return string.Format(CultureInfo.InvariantCulture , format , format_args(args[1..]));
             }
             catch (FormatException)
             {
@@ -160,7 +160,27 @@ internal static class Strings
     }
 
     //문자열로 변환 (concat, join): null은 빈 문자열
-    static string text_of(object? value) => Convert.ToString(value , CultureInfo.InvariantCulture) ?? string.Empty;
+    static string text_of(object? value) => Values.Text(value);
+
+    //만들수 있는 문자열의 최대 길이 (mul의 반복, padleft/padright, 1.6.2부터, Native JS와 같음)
+    internal const int MaxLength = 1 << 29;
+
+    //console.write/writeline의 형식 문자열: Console.Write(format, args)처럼 첫번째 인자도 {0} (1.6.2부터 문화권과 관계없이 바꾸고, 잘못된 형식은 Jyuno 오류)
+    internal static string Format(object format , object?[] args)
+    {
+        if (format is not string text)
+            throw new JyunoException($"형식 문자열은 문자열이어야 합니다. ('{Values.Show(format)}')");
+        try
+        {
+            return string.Format(CultureInfo.InvariantCulture , text , format_args(args));
+        }
+        catch (FormatException)
+        {
+            throw new JyunoException($"형식 문자열이 올바르지 않습니다: \"{text}\"");
+        }
+    }
+    //배열/리스트는 [1, 2, 3] 형식으로 (string.Format은 타입 이름을 씀)
+    static object?[] format_args(object?[] args) => args.Select(o => o is System.Collections.IList && o is not string ? Values.Text(o) : o).ToArray();
 
     //문자열 인자 (null이나 다른 타입이라면 오류)
     static string text(object?[] args , int i , string name)
@@ -200,7 +220,7 @@ internal static class Strings
     {
         need(args , 2 , name);
         string s = text(args , 0 , name);
-        int width = index(args[1] , "길이" , 0 , Array.MaxLength , name);
+        int width = index(args[1] , "길이" , 0 , MaxLength , name);
         char fill = ' ';
         if (args.Length > 2)
         {

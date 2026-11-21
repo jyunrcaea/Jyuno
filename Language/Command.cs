@@ -1,5 +1,6 @@
 ﻿using Jyuno.Compiler;
 using System.Globalization;
+using System.Text;
 
 namespace Jyuno.Language;
 
@@ -24,7 +25,7 @@ public static class JyunoCommands
                 return Values.ToReal(args[0] ?? throw null_exception);
             return null;
         });
-        dict.AddPureFunction("string" , args => args.Length is 0 ? string.Empty : Convert.ToString((args[0] ?? throw null_exception) , CultureInfo.InvariantCulture));
+        dict.AddPureFunction("string" , args => args.Length is 0 ? string.Empty : Values.Text(args[0] ?? throw null_exception));
         dict.AddFunction("array" , args => Collections.NewArray(args));
         dict.AddFunction("list" , args => Collections.NewList(args));
         dict.AddPureFunction("length" , args => {
@@ -34,7 +35,7 @@ public static class JyunoCommands
                 string text => (long)text.Length,
                 System.Collections.ICollection collection => (long)collection.Count,
                 null => throw null_exception,
-                _ => throw new JyunoException($"'{args[0]}'은/는 문자열 또는 배열/리스트가 아니므로 길이를 구할수 없습니다.")
+                _ => throw new JyunoException($"'{Values.Show(args[0])}'은/는 문자열 또는 배열/리스트가 아니므로 길이를 구할수 없습니다.")
             };
         });
         dict.AddPureFunction("add" , Add , intrinsic: Intrinsic.Add);
@@ -97,35 +98,36 @@ public static class JyunoCommands
     }
     public static void AddConsole(VariableDictionary dict)
     {
+        //1.6.2부터 값은 문화권과 관계없이 문자열로 바꿈 (string 함수와 같음, 소수점이 쉼표인 문화권에서도 1.5)
         dict.AddFunction("console.write" ,args => {
             if (args.Length is 0)
                 Console.Write(string.Empty);
             else if (args.Length is 1)
-                Console.Write(args[0] ?? "null");
+                Console.Write(args[0] is null ? "null" : Values.Text(args[0]));
             else
-            {
-                Console.Write((string?)args[0] ?? "null" , args);
-            }
+                Console.Write(Strings.Format(args[0] ?? "null" , args));
             return null;
         });
         dict.AddFunction("console.writeline" , args => {
             if (args.Length is 0)
                 Console.WriteLine();
             else if (args.Length is 1)
-                Console.WriteLine(args[0]);
+                Console.WriteLine(Values.Text(args[0]));
             else
-                Console.WriteLine((string)(args[0] ?? throw null_exception) , args);
+                Console.WriteLine(Strings.Format(args[0] ?? throw null_exception , args));
             return null;
         });
         dict.AddFunction("console.readline" ,args => {
             return Console.ReadLine();
         });
+        //읽은 글자 하나를 문자열로 (1.6.2부터, 이전에는 .NET의 char), 입력이 끝났다면 null
         dict.AddFunction("console.read" ,args => {
-            return (char)Console.Read();
+            int c = Console.Read();
+            return c < 0 ? null : ((char)c).ToString();
         });
         if (OperatingSystem.IsWindows())
         {
-            dict.AddVariable("console.title" , () => Console.Title , v => Console.Title = (string)(v ?? throw null_exception));
+            dict.AddVariable("console.title" , () => Console.Title , v => Console.Title = Values.Text(v ?? throw null_exception));
         }
         dict.AddFunction("console.clear" ,args => {
             Console.Clear();
@@ -176,7 +178,7 @@ public static class JyunoCommands
         dict.AddPureFunction("math.abs" , args => {
             if (args.Length is 0)
                 throw new JyunoException("절댓값을 구할 값이 필요합니다.");
-            return Math.Abs((dynamic)(args[0] ?? throw null_exception));
+            return Values.Abs(args[0] ?? throw null_exception);
         });
     }
     public static void AddFile(VariableDictionary dict)
@@ -189,7 +191,8 @@ public static class JyunoCommands
         dict.AddFunction("file.read" , args => {
             if (args.Length is 0 || (args[0] ?? throw null_exception) is not string)
                 throw new JyunoException("파일의 경로를 입력해야 합니다.");
-            return File.Exists((string)(args[0] ?? throw null_exception)) ? File.ReadAllText((string)(args[0] ?? throw null_exception)) : null;
+            string path = (string)args[0]!;
+            return File.Exists(path) ? io(() => File.ReadAllText(path)) : null;
         });
         dict.AddFunction("directory.now" , args => {
             return Directory.GetCurrentDirectory();
@@ -202,7 +205,10 @@ public static class JyunoCommands
         dict.AddFunction("file.write" , args => {
             if (args.Length < 2)
                 throw new JyunoException("파일의 경로, 그리고 내용을 입력해야합니다.");
-            File.WriteAllText((string)(args[0] ?? throw null_exception) , (string?)(args[1] ?? throw null_exception));
+            if ((args[0] ?? throw null_exception) is not string path)
+                throw new JyunoException("파일의 경로는 문자열이어야 합니다.");
+            string text = Values.Text(args[1] ?? throw null_exception);
+            io(() => File.WriteAllText(path , text));
             return null;
         });
         dict.AddFunction("directory.files" , args => {
@@ -215,7 +221,7 @@ public static class JyunoCommands
             {
                 path = Directory.GetCurrentDirectory();
             }
-            return Directory.GetFiles(path);
+            return io(() => Directory.GetFiles(path));
         });
         dict.AddFunction("directory.list" , args => {
             if (args.Length > 0 && (args[0] ?? throw null_exception) is string path)
@@ -226,12 +232,12 @@ public static class JyunoCommands
             {
                 path = Directory.GetCurrentDirectory();
             }
-            return Directory.GetDirectories(path);
+            return io(() => Directory.GetDirectories(path));
         });
         dict.AddFunction("directory.move" , args => {
             if (args.Length >= 2 && args[0] is string source && args[1] is string target)
             {
-                Directory.Move(source , target);
+                io(() => Directory.Move(source , target));
                 return true;
             }
             throw new JyunoException("기존 경로, 그리고 이동할 새 경로를 입력하지 않았습니다.");
@@ -241,9 +247,10 @@ public static class JyunoCommands
             {
                 throw new JyunoException("제거할 파일의 경로를 입력해야 합니다.");
             }
-            string path = (string)(args[0] ?? throw null_exception);
+            if ((args[0] ?? throw null_exception) is not string path)
+                throw new JyunoException("제거할 파일의 경로는 문자열이어야 합니다.");
             if (!File.Exists(path)) return false;
-            File.Delete(path);
+            io(() => File.Delete(path));
             return true;
         });
     }
@@ -278,7 +285,7 @@ public static class JyunoCommands
         foreach (object? arg in args)
         {
             if (arg is string)
-                return string.Concat(args);
+                return string.Concat(args.Select(Values.Text));
         }
         //그렇지 않으면 수 연산
         object? sum = args[0];
@@ -299,7 +306,11 @@ public static class JyunoCommands
         if (args[0] is System.Collections.IList collection)
             return Collections.Sub(collection , args[1]);
         if (args[0] is string str)
-            return str.Replace((string)(args[1] ?? throw null_exception), string.Empty);
+        {
+            if ((args[1] ?? throw null_exception) is not string remove)
+                throw new JyunoException($"문자열에서 뺄 값은 문자열이어야 합니다. ('{Values.Show(args[1])}')");
+            return remove.Length is 0 ? str : str.Replace(remove , string.Empty);
+        }
         //정수끼리는 정수로, 실수가 섞여있다면 실수로 계산
         if (Values.TryGetInteger(args[0] , out long int_a) && Values.TryGetInteger(args[1] , out long int_b))
             return int_a - int_b;
@@ -321,7 +332,12 @@ public static class JyunoCommands
             if (!Values.TryGetInteger(args[1] ?? throw null_exception , out long count))
                 throw new JyunoException("문자열을 반복할 횟수는 정수여야 합니다.");
             //음수 횟수는 0번 반복한 것으로 취급
-            return string.Concat(Enumerable.Repeat(str , (int)Math.Clamp(count , 0 , int.MaxValue)));
+            if (count <= 0 || str.Length is 0)
+                return string.Empty;
+            //1.6.2부터 너무 긴 문자열은 만들지 않고 오류 (이전에는 메모리가 부족해질 때까지 멈춘 것처럼 보였음)
+            if (count > Strings.MaxLength / str.Length)
+                throw new JyunoException($"반복한 문자열이 너무 깁니다. (최대 {Strings.MaxLength:N0}자)");
+            return new StringBuilder(str.Length * (int)count).Insert(0 , str , (int)count).ToString();
         }
         object? mul = 1L;
         for(int i=0 ;i<args.Length;i++)
@@ -337,7 +353,7 @@ public static class JyunoCommands
             return result;
         //문자열을 나누면 구분자로 자른 문자열 배열 (C#의 a.Split(b))
         if (args[0] is string text)
-            return text.Split(Convert.ToString(args[1] ?? throw null_exception , CultureInfo.InvariantCulture) ?? string.Empty);
+            return text.Split(Values.Text(args[1] ?? throw null_exception));
         object divisor = args[1] ?? throw null_exception;
         if (Values.TryGetInteger(divisor , out long zero) && zero is 0)
             throw new JyunoException("0으로 나눌수 없습니다.");
@@ -465,6 +481,20 @@ public static class JyunoCommands
             return real;
         throw new JyunoException($"'{value}'은/는 숫자가 아닙니다.");
     }
+
+    //파일 작업의 .NET 예외(권한 없음, 잘못된 경로 등)를 Jyuno 오류로 바꿈 (1.6.2부터)
+    static T io<T>(Func<T> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            throw new JyunoException($"파일 작업을 하지 못했습니다: {e.Message}" , e);
+        }
+    }
+    static void io(Action action) => io<object?>(() => { action(); return null; });
 
     //예외 객체를 공유하면 스택 트레이스가 덮어써지므로 매번 새로 만듦
     public static JyunoException null_exception => new("null을 처리할수 없습니다.");

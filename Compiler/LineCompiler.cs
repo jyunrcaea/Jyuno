@@ -128,9 +128,19 @@ public partial class Interpreter
             }
             return line;
         }
-        line.Expression = compile_expression(tokens , 0 , false , out _).Eval;
+        Expr expression = compile_expression(tokens , 0 , false , out int end);
+        //식이 끝난 뒤에 남은 토큰이 있다면 오류 (1.6.2부터, 이전에는 조용히 무시해서 x = 5 -3이 5가 되었음)
+        if (expression.SyntaxError is null && end < tokens.Length)
+            expression = syntax_error($"식이 끝난 뒤에 남은 값이 있습니다: '{token_text(tokens[end])}' (연산자는 앞뒤를 띄어 쓰고, 함수 호출은 괄호로 묶어주세요)");
+        line.Expression = expression.Eval;
         return line;
     }
+
+    static string token_text(Token token) => token.value switch {
+        string s when token.type is TokenType.Constant => $"\"{s}\"",
+        null => "null",
+        _ => Values.Show(token.value)
+    };
 
     static bool is_prefix(Token[] tokens , int index , char prefix) => index < tokens.Length && tokens[index].type is TokenType.Prefix && tokens[index].value is char c && c == prefix;
 
@@ -140,6 +150,19 @@ public partial class Interpreter
     //end: 식 다음 토큰의 위치
     //closed: 식 바로 다음에 ')'가 와야 하는지 (괄호 안의 식)
     Expr compile_expression(Token[] tokens , int start , bool closed , out int end)
+    {
+        if (!enter_expression())
+            return too_deep(tokens , out end);
+        try
+        {
+            return compile_expression_core(tokens , start , closed , out end);
+        }
+        finally
+        {
+            expression_depth--;
+        }
+    }
+    Expr compile_expression_core(Token[] tokens , int start , bool closed , out int end)
     {
         end = tokens.Length; //기본값
         if (start >= tokens.Length)
@@ -318,7 +341,7 @@ public partial class Interpreter
         {
             return new Expr(() => {
                 object?[] args = inline_args;
-                if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? found))
+                if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && find_in(instance , member , out object? found))
                     return invoke(found);
                 if (!resolve(site , out object? holder))
                     throw new JyunoException(missing);
@@ -403,7 +426,7 @@ public partial class Interpreter
                     {
                         Func<object?> member_read(bool borrow) => () => {
                             object?[] args = inline_args;
-                            if (!(inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.TryGetValue(member , out object? holder)) && !resolve(site , out holder))
+                            if (!(inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && find_in(instance , member , out object? holder)) && !resolve(site , out holder))
                                 throw new JyunoException($"'{name}'은/는 알수없는 변수/함수 입니다.");
                             if (holder is VariableInterface vi)
                                 return borrow && EscapeAnalysis ? vi.Get() : read(vi.Get());
@@ -413,7 +436,7 @@ public partial class Interpreter
                             Borrow = member_read(true) ,
                             Hosted = () => {
                                 object?[] args = inline_args;
-                                if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && instance.Scope.Variables.ContainsKey(member))
+                                if (inline_frame is not null && member_slot < args.Length && args[member_slot] is StructInstance instance && find_in(instance , member , out _))
                                     return false;
                                 return resolve(site , out object? holder) && is_hosted(holder);
                             }

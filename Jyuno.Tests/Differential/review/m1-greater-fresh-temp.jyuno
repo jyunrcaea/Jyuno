@@ -1,0 +1,13 @@
+struct S
+  param a
+  func <
+    param o
+    return a != 1
+  endfunc
+  func >
+    param o
+    a = 3
+    return false
+  endfunc
+endstruct
+console.writeline (string (greater 0 (S 1)))

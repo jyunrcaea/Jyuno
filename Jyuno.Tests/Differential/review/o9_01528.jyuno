@@ -1,0 +1,130 @@
+tick = 0
+log = list
+struct S0
+  param b
+  param a
+  func <
+    param o
+    tick += 1
+    return a <= 1
+  endfunc
+  func >
+    param o
+    a = (b * 2)
+    return 0
+  endfunc
+  func >=
+    param o
+    return tick % 2 == 0
+  endfunc
+  func +
+    param o
+    return S0 (a - 2) 7
+  endfunc
+  func -
+    param o
+    tick += 2
+    return S0 (a + 1) 7
+  endfunc
+  func *
+    param o
+    return S0 b a
+  endfunc
+  func &
+    param o
+    return S0 (a + 1) b
+  endfunc
+  func |
+    param o
+    return S0 a a
+  endfunc
+  func ^
+    param o
+    return S0 3 (b + 2)
+  endfunc
+  func !
+    tick += 1
+    return a
+  endfunc
+  func ~
+    return false
+  endfunc
+  func bump
+    a = a + 1
+    return a
+  endfunc
+endstruct
+g0 = S0 5 5
+g1 = S0 2 -2
+g2 = S0 0 0
+func idf
+  param p
+  return p
+endfunc
+func eqf
+  param p
+  param q
+  return equal p q
+endfunc
+func ltf
+  param p
+  param q
+  return less p q
+endfunc
+func gtf
+  param p
+  param q
+  return p > q
+endfunc
+func nef
+  param p
+  param q
+  return p != q
+endfunc
+func geta
+  param p
+  return p.a
+endfunc
+func pick
+  param p
+  param q
+  return (equal p q) ? p : q
+endfunc
+l = list g2 g1 g1
+console.writeline (string (array.binary_search l (l 0)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (length (sub l (S0 3 2))))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (g1 >= (l 1)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+g1 = (S0 5 5)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+l 1 (idf g2)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (not g2))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (true == g2))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+if greater 1 (S0 3 0)
+  console.writeline "yes"
+else
+  console.writeline "no"
+end
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (length (sub l (S0 3 -2))))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+t = less (idf g1) g1
+console.writeline (string t)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (array.indexof l (S0 1 -2)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (geta (array.max l)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+t = g0 > (idf g0)
+console.writeline (string t)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (array.lastindexof l (idf g1)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (equal (l 1) g1))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string.join "," log)

@@ -24,6 +24,23 @@ public partial class Interpreter : IDisposable
     public bool Inlining { get; set; } = false;
     public Runtime runtime { get; init; }
     public int CurrentExecuteLine { get; private set; } = -1;
+    /// <summary>
+    /// 실행을 멈추게 하는 토큰 (1.6.2부터). 취소되면 다음 줄을 실행하기 전에 <see cref="OperationCanceledException"/>이 발생합니다.
+    /// (무한 반복문 등을 멈출때 사용, 시간 제한은 <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>)
+    /// </summary>
+    public CancellationToken CancellationToken { get; set; }
+    /// <summary>함수 호출의 최대 깊이 (1.6.2부터, 기본값은 <see cref="MaxCallDepth"/>). 이보다 얕더라도 스택이 부족하면 오류가 납니다.</summary>
+    public int CallDepthLimit
+    {
+        get => call_depth_limit;
+        set => call_depth_limit = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(value) , "함수 호출의 최대 깊이는 1 이상이어야 합니다.");
+    }
+    int call_depth_limit = MaxCallDepth;
+    /// <summary>
+    /// 마지막으로 Run() 또는 ExecuteLine() 밖으로 나간 예외가 발생한 줄 (1.6.2부터, 0부터, 알수 없다면 -1).
+    /// <see cref="JyunoException"/>이 아닌 예외(프로그램이 추가한 함수의 예외 등)의 줄을 알아낼때 사용합니다.
+    /// </summary>
+    public int LastErrorLine { get; private set; } = -1;
 
     //변수 영역: 스크립트 최상위 영역, 또는 함수 호출 한번의 지역 영역
     //함수 영역의 Parent는 호출한 쪽이 아니라 함수를 만든 영역이므로, 다른 함수의 지역 변수는 보이지 않음
@@ -41,8 +58,37 @@ public partial class Interpreter : IDisposable
         public bool Shared;
         //구조체 값 하나의 영역이라면 그 구조체 값 (필드와 구조체 함수가 이 영역에 있음)
         public StructInstance? Instance;
-        //구조체 값을 담은 변수 때문에 선언된 멤버 이름(me.name 등) → 실제로 가리키는 구조체 값과 그 안의 이름
-        public Dictionary<string , (StructInstance Instance, string Name)>? Aliases;
+        //멤버 이름(me.name 등)은 미리 선언하지 않고 찾을 때 구조체 값을 따라가서 찾음 (1.6.2부터, Struct.cs의 find 참고)
+        //이 영역에서 지웠거나 다른 이름으로 가려진 멤버 이름 (변수에 구조체 값을 다시 넣으면 다시 보임)
+        public HashSet<string>? Hidden;
+        //이 영역에 있는 점(.)이 들어간 이름의 개수 (구조체 값을 넣을때 덮어쓸 이름이 있는지 빠르게 확인하기 위함)
+        public int Dotted;
+        //이름을 처음 만든 순서 (구조체 값의 영역에서만 기록하며, 생성자가 끝나면 구조체 값의 Members가 됨)
+        public List<string>? Order;
+
+        //이름을 추가하거나 바꿈 (이미 있었다면 원래 있던 것을 previous로 돌려줌)
+        public bool Set(string name , object? holder , out object? previous)
+        {
+            if (Variables.TryGetValue(name , out previous))
+            {
+                Variables[name] = holder;
+                return true;
+            }
+            Variables.Add(name , holder);
+            if (name.Contains('.'))
+                Dotted++;
+            Order?.Add(name);
+            return false;
+        }
+        public bool Remove(string name , out object? holder)
+        {
+            if (!Variables.Remove(name , out holder))
+                return false;
+            if (name.Contains('.'))
+                Dotted--;
+            Order?.Remove(name);
+            return true;
+        }
     }
     //지금 실행중인 영역 (처음에는 스크립트 최상위 영역, for 문 안에서는 반복 한번의 영역)
     Scope current;
@@ -60,8 +106,18 @@ public partial class Interpreter : IDisposable
         public NameSite(string name)
         {
             Name = name;
+            //멤버 이름일수 있다면 점 앞의 이름들 (a.b.c → a, a.b)
+            List<string>? prefixes = null;
+            for (int dot = name.IndexOf('.') ; dot >= 0 ; dot = name.IndexOf('.' , dot + 1))
+            {
+                if (dot > 0 && dot < name.Length - 1)
+                    (prefixes ??= new()).Add(name[..dot]);
+            }
+            Prefixes = prefixes?.ToArray();
         }
         public readonly string Name;
+        //점이 들어간 이름이라면 점 앞의 이름들 (그 이름의 변수에 구조체 값이 있다면 멤버 이름일수 있음)
+        public readonly string[]? Prefixes;
         //1단계: 같은 영역에서 다시 찾는 경우 (while 문 등)
         public Scope? Scope;
         public long ScopeVersion, Version;
@@ -91,7 +147,8 @@ public partial class Interpreter : IDisposable
             return true;
         }
         Scope? parent = scope.Parent;
-        if (parent is not null && site.Parent == parent && site.ParentVersion == bindings_version && !scope.Variables.ContainsKey(site.Name))
+        if (parent is not null && site.Parent == parent && site.ParentVersion == bindings_version && !scope.Variables.ContainsKey(site.Name)
+            && !(site.Prefixes is not null && find_member(scope , site , out _)))
         {
             holder = site.ParentHolder;
             remember(site , scope , holder);
@@ -103,7 +160,7 @@ public partial class Interpreter : IDisposable
     {
         Scope scope = current;
         string name = site.Name;
-        if (scope.Variables.TryGetValue(name , out holder))
+        if (scope.Variables.TryGetValue(name , out holder) || (site.Prefixes is not null && find_member(scope , site , out holder)))
         {
             remember(site , scope , holder);
             return true;
@@ -113,7 +170,7 @@ public partial class Interpreter : IDisposable
         {
             //이 영역이 바뀌면 이 결과도 바뀔수 있음
             outer.Shared = true;
-            if (outer.Variables.TryGetValue(name , out holder))
+            if (outer.Variables.TryGetValue(name , out holder) || (site.Prefixes is not null && find_member(outer , site , out holder)))
             {
                 found = true;
                 break;
@@ -165,26 +222,34 @@ public partial class Interpreter : IDisposable
     void substitute_variable(string name , object? value)
     {
         //새로 만드는 변수는 항상 지금 영역에 둠 (전역 목록은 다른 인터프리터와 공유함)
-        VariableDictionary dict = current.Variables;
-        if (!dict.TryAdd(name , value))
-        {
-            //구조체 값을 담은 변수를 덮어쓴다면 그 멤버 이름도 지움
-            forget(current , name , dict[name]);
-            dict[name] = value;
-        }
-        scope_changed(current);
+        Scope scope = current;
+        //같은 이름의 멤버 이름이 있었다면 가려짐 (나중에 이 이름을 지워도 다시 보이지 않음)
+        if (name.Contains('.') && !scope.Variables.ContainsKey(name) && find_member(scope , name , out _ , out _ , out _))
+            (scope.Hidden ??= new()).Add(name);
+        //구조체 값을 담은 변수를 덮어쓴다면 그 구조체 값은 더 이상 이 이름에 담겨있지 않음
+        if (scope.Set(name , value , out object? previous))
+            forget(scope , name , previous);
+        scope_changed(scope);
     }
     bool remove_variable(string name)
     {
         //읽을 때와 같은 순서로 찾아서 삭제함 (호출한 다른 함수의 지역 변수는 삭제하지 않음)
         for (Scope? scope = current ; scope is not null ; scope = scope.Parent)
         {
-            if (scope.Variables.Remove(name , out object? holder))
+            if (scope.Remove(name , out object? holder))
             {
-                //구조체 값을 담은 변수라면 멤버 이름(이름.필드 등)도 함께 지움
+                //구조체 값을 담은 변수라면 멤버 이름(이름.필드 등)도 함께 사라짐
                 forget(scope , name , holder);
                 scope_changed(scope);
-                refresh_owner(scope);
+                touch(scope);
+                return true;
+            }
+            //멤버 이름이라면 이 영역에서만 보이지 않게 함 (구조체 값의 필드는 그대로)
+            if (name.Contains('.') && find_member(scope , name , out _ , out _ , out _))
+            {
+                (scope.Hidden ??= new()).Add(name);
+                scope_changed(scope);
+                touch(scope);
                 return true;
             }
         }
@@ -225,19 +290,40 @@ public partial class Interpreter : IDisposable
         {
             return e.Error;
         }
+        catch (Exception e) when (mark_error(e))
+        {
+            throw;
+        }
         finally
         {
             CurrentExecuteLine = current;
         }
     }
+    //예외가 Run()/ExecuteLine() 밖으로 나가기 전에 오류가 난 줄을 기록함 (예외 필터는 finally보다 먼저 실행되므로 가장 안쪽의 줄을 알수 있음, 예외를 잡지는 않음)
+    bool mark_error(Exception e)
+    {
+        if (e is GrammarErrorException)
+            return false;
+        int line = CurrentExecuteLine;
+        if (e is JyunoException jyuno && jyuno.Line < 0)
+            jyuno.Line = line;
+        LastErrorLine = e is JyunoException { Line: >= 0 } marked ? marked.Line : line;
+        return false;
+    }
+
     bool running = false;
     public object? Run(int start = 0)
     {
         if (running)
             throw new JyunoException("이미 실행중입니다.");
         running = true;
+        //C# 함수가 ExecuteLine()으로 실행중인 줄(함수 호출 도중 등)에서 Run()을 호출했다면, 끝난 뒤 그 줄과 영역으로 되돌림
+        int caller_line = CurrentExecuteLine;
+        //실행 도중에 ExecuteLine(string)으로 추가된 줄은 그 자리에서 이미 실행되었으므로 다시 실행하지 않음
+        int end = scripts.Count;
         //인라인된 호출 도중에 C# 함수가 Run()을 호출했다면 ExecuteLine()처럼 함수 영역을 먼저 만듦
         materialize_inline();
+        Scope caller_scope = current;
         //인라인된 호출은 호출 프레임을 만들지 않으므로, 그 안에서 다시 실행한다면 프레임을 만들어 둠 (반복문의 상태가 바깥 호출과 섞이지 않도록)
         bool frameless = inline_depth > (frames.Count > 0 ? frames.Peek().InlineDepth : 0);
         if (frameless)
@@ -252,7 +338,7 @@ public partial class Interpreter : IDisposable
         current = top;
         try
         {
-            for(CurrentExecuteLine = start ;CurrentExecuteLine<scripts.Count ; CurrentExecuteLine++)
+            for (CurrentExecuteLine = start ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
                 var ret = execute_line(CurrentExecuteLine , true);
                 if (ret is ReturnInfo ri)
@@ -271,13 +357,17 @@ public partial class Interpreter : IDisposable
             //함수 안에서 발생한 문법 오류
             return e.Error;
         }
+        catch (Exception e) when (mark_error(e))
+        {
+            throw;
+        }
         finally
         {
             //반환되거나 예외가 발생해도 다시 실행할수 있도록 (for 문 안에서 끝났다면 최상위 영역으로 되돌림)
             running = false;
-            current = top;
+            current = caller_line >= 0 ? caller_scope : top;
             top_for_states.Clear();
-            CurrentExecuteLine = -1;
+            CurrentExecuteLine = caller_line;
             if (frameless)
             {
                 frames.Pop();
@@ -287,6 +377,8 @@ public partial class Interpreter : IDisposable
     }
     object? execute_line(int line , bool flow)
     {
+        if (CancellationToken.IsCancellationRequested)
+            throw new OperationCanceledException("실행이 취소되었습니다." , CancellationToken);
         CompiledLine compiled = compiled_line(line);
         if (compiled.Error is string error)
             return new GrammarError(line , error);
@@ -546,7 +638,7 @@ public partial class Interpreter : IDisposable
             value = local_value();
         }
         //이미 지금 영역에 있는 이름이라면 일반 대입과 같음 (상수/함수는 바꿀수 없음)
-        if (current.Variables.TryGetValue(name , out object? existing))
+        if (find(current , name , name.Contains('.') , out object? existing))
         {
             if (existing is VariableInterface vi)
                 assign(vi , name , value);
@@ -572,8 +664,16 @@ public partial class Interpreter : IDisposable
         public readonly Dictionary<int , ForState> ForStates = new();
     }
     Stack<CallFrame> frames = new();
-    //무한 재귀로 프로그램이 죽지 않도록 제한
+    //무한 재귀로 프로그램이 죽지 않도록 제한 (기본값, 인터프리터마다 CallDepthLimit으로 바꿀수 있음)
     public const int MaxCallDepth = 200;
+    //함수를 한번 더 호출할수 있는지 (깊이 제한, 그리고 C# 스택이 부족하면 프로그램이 죽으므로 그 전에 오류)
+    void check_call_depth()
+    {
+        if (frames.Count + inline_depth >= call_depth_limit)
+            throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {call_depth_limit}번)");
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            throw new JyunoException("함수 호출이 너무 깊어서 스택이 부족합니다.");
+    }
 
     //스크립트에서 func로 만든 함수
     sealed class JyunoFunction : FunctionInterface
@@ -638,8 +738,7 @@ public partial class Interpreter : IDisposable
     //함수/구조체 본문(line과 end 사이)을 body 영역에서 실행 (함수 안에서 만든 변수는 함수가 끝나면 사라짐)
     object? call_function(int line , int end , Scope body , object?[] args)
     {
-        if (frames.Count + inline_depth >= MaxCallDepth)
-            throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
+        check_call_depth();
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         InlineShape? outer_frame = inline_frame;
@@ -810,7 +909,7 @@ public partial class Interpreter : IDisposable
         }
     }
     readonly Dictionary<int , InlineShape?> inline_shapes = new();
-    //인라인된 호출의 깊이 (MaxCallDepth 검사에 포함)
+    //인라인된 호출의 깊이 (CallDepthLimit 검사에 포함)
     int inline_depth = 0;
 
     InlineShape? inline_shape(int line , int end)
@@ -855,8 +954,7 @@ public partial class Interpreter : IDisposable
     //함수 본문을 줄 단위로 실행하지 않고 바로 계산 (영역, 인자, 실행 위치, 오류는 call_function과 같음)
     object? call_inline(JyunoFunction function , InlineShape shape , object?[] args)
     {
-        if (frames.Count + inline_depth >= MaxCallDepth)
-            throw new JyunoException($"함수 호출이 너무 깊습니다. (최대 {MaxCallDepth}번)");
+        check_call_depth();
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         if (!shape.DirectCompiled)

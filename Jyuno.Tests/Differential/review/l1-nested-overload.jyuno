@@ -1,0 +1,20 @@
+struct S0
+  param c
+  func ==
+    param o
+    return c != 0
+  endfunc
+endstruct
+struct S1
+  param b
+endstruct
+g0 = S1 (S0 0)
+g1 = S1 (S0 0)
+l = list g0
+console.writeline (string (equal g0 g1))
+console.writeline (string (g0 == g1))
+console.writeline (string (array.contains l g1))
+console.writeline (string (array.contains l (l 0)))
+console.writeline (string (array.indexof l g1))
+console.writeline (string (array.count l g1))
+console.writeline (string (length (array.distinct (list g0 g1))))

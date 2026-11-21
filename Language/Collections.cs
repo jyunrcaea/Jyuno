@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Globalization;
 
 namespace Jyuno.Language;
@@ -342,10 +342,10 @@ internal static class Collections
     public static string Join(object?[] args , string name)
     {
         IList list = Target(args , name);
-        string separator = args.Length > 1 ? Convert.ToString(args[1] , CultureInfo.InvariantCulture) ?? string.Empty : string.Empty;
+        string separator = args.Length > 1 ? Values.Text(args[1]) : string.Empty;
         string[] texts = new string[list.Count];
         for (int i = 0 ; i < texts.Length ; i++)
-            texts[i] = Convert.ToString(list[i] , CultureInfo.InvariantCulture) ?? string.Empty;
+            texts[i] = Values.Text(list[i]);
         return string.Join(separator , texts);
     }
 

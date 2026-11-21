@@ -1,0 +1,135 @@
+tick = 0
+log = list
+struct S0
+  param a
+  param b
+  func <
+    param o
+    tick += 1
+    return a != 1
+  endfunc
+  func >
+    param o
+    console.writeline "op6"
+    a = 3
+    return b <= 0
+  endfunc
+  func >=
+    param o
+    g1.b = 7
+    tick += 2
+    return tick % 2 == 0
+  endfunc
+  func +
+    param o
+    g1.a = 6
+    return S0 b b
+  endfunc
+  func -
+    param o
+    return S0 1 (a + 1)
+  endfunc
+  func *
+    param o
+    g0.z = 6
+    return S0 0 -1
+  endfunc
+  func &
+    param o
+    return S0 a 2
+  endfunc
+  func |
+    param o
+    return S0 -1 (a + 2)
+  endfunc
+  func ^
+    param o
+    return S0 (a + 2) 7
+  endfunc
+  func !
+    return true
+  endfunc
+  func ~
+    return a
+  endfunc
+  func bump
+    a = a + 1
+    return a
+  endfunc
+endstruct
+g0 = S0 0 5
+g1 = S0 -2 -2
+g2 = S0 -2 3
+func idf
+  param p
+  return p
+endfunc
+func eqf
+  param p
+  param q
+  return equal p q
+endfunc
+func ltf
+  param p
+  param q
+  return less p q
+endfunc
+func gtf
+  param p
+  param q
+  return p > q
+endfunc
+func nef
+  param p
+  param q
+  return p != q
+endfunc
+func geta
+  param p
+  return p.a
+endfunc
+func pick
+  param p
+  param q
+  return (equal p q) ? p : q
+endfunc
+l = list g0 g2 g1
+console.writeline (string (and (g2 + g0) g0))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (!(l 0)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+if greater true (S0 1 5)
+  console.writeline "yes"
+else
+  console.writeline "no"
+end
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (g0 > g2))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string ((pick g0 g2) <= g0))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (length (sub l 2)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (equal (S0 0 3) g0))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (g2.bump)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+if g0 >= g0
+  console.writeline "yes"
+else
+  console.writeline "no"
+end
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (g0 == (pick g1 g1)))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+l 0 g2
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+g1 = (S0 2 0)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (1 == g2))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string (g0 >= g2))
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (g1.bump)
+console.writeline (string.concat tick " " (string g0) " " (string g1) " " (string g2))
+console.writeline (string.join "," log)

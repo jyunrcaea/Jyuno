@@ -1,4 +1,4 @@
-using Jyuno.Compiler;
+﻿using Jyuno.Compiler;
 using Jyuno.Language;
 
 namespace Jyuno;
@@ -45,8 +45,9 @@ public partial class Interpreter
             return long2(op , a , b);
         if (is_number(x) && is_number(y))
             return number2(op , x! , y!);
-        //구조체 값은 연산자를 다시 정의했을수 있으므로 원래 내장 함수로 계산
-        if (x is StructInstance)
+        //구조체 값은 연산자를 다시 정의했을수 있으므로 원래 내장 함수로 계산 (1.6.2부터 오른쪽 값도 확인)
+        //(less 1 p를 여기서 계산하면 Values.Compare가 <와 >를 모두 호출하므로, 연산자 1 < p나 Native JS와 결과가 달랐음)
+        if (x is StructInstance || y is StructInstance)
             return Miss;
         return any2(op , x , y);
     }
@@ -211,8 +212,10 @@ public partial class Interpreter
                     if (x is StructInstance lent && hosted_b is not null && hosted_b())
                         x = owner.read(lent);
                     object? y = b();
-                    if ((borrowed_a || borrowed_b) && op is Intrinsic.Equal && x is StructInstance s && y is StructInstance t && overload(s , "==") is null)
-                        return box(StructInstance.Same(s , borrowed_a , t , borrowed_b));
+                    //비교 도중에 다시 정의한 ==(필드 안의 구조체 값 등)를 만나면 그 함수가 빌린 값을 바꿀수 있으므로, 원래대로 복사해서 비교 (1.6.2부터)
+                    if ((borrowed_a || borrowed_b) && op is Intrinsic.Equal && x is StructInstance s && y is StructInstance t && overload(s , "==") is null
+                        && StructInstance.SameLent(s , borrowed_a , t , borrowed_b) is bool same)
+                        return box(same);
                     object r = fast2(op , x , y);
                     return r != Miss ? r : owner.invoke_function(callee , new[] { borrowed_a ? owner.read(x) : x , borrowed_b ? owner.read(y) : y });
                 }

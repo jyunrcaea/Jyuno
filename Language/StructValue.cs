@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 
 namespace Jyuno.Language;
 
@@ -28,6 +28,7 @@ public abstract class StructValue
     /// <summary>C#의 record처럼 '이름 { 필드 = 값, ... }' 형식의 문자열</summary>
     public override string ToString()
     {
+        Values.EnsureStack("값이 너무 깊게 중첩되어 있어서 문자열로 바꿀수 없습니다.");
         StringBuilder builder = new(TypeName);
         IReadOnlyList<string> fields = FieldNames;
         if (fields.Count is 0)

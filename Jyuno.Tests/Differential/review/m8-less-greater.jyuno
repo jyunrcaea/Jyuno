@@ -1,0 +1,17 @@
+struct s
+  param v
+  func >
+    param o
+    console.writeline "gt called"
+    return false
+  endfunc
+  func <
+    param o
+    console.writeline "lt called"
+    return false
+  endfunc
+endstruct
+p = s 1
+console.writeline (less 1 p)
+console.writeline (greater 1 p)
+console.writeline (1 < p)

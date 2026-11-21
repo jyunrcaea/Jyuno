@@ -1,4 +1,4 @@
-using Jyuno.Compiler;
+﻿using Jyuno.Compiler;
 using Jyuno.Language;
 
 namespace Jyuno;
@@ -50,6 +50,37 @@ public partial class Interpreter
     //argument: 키워드(if, return 등)의 인자 자리인지 (값만 읽는 이름이 없을 때의 오류 메시지가 이전과 같도록)
     Expr compile_operators(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
+        if (!enter_expression())
+            return too_deep(tokens , out end);
+        try
+        {
+            return compile_operators_core(tokens , start , closed , argument , out end);
+        }
+        finally
+        {
+            expression_depth--;
+        }
+    }
+
+    //식의 중첩 깊이: 컴파일러는 괄호와 연산자마다 재귀하므로, 너무 깊으면 스택 오버플로로 프로세스가 끝나기 전에 오류 (1.6.2부터)
+    //(계산할 때도 같은 깊이로 재귀하므로, 컴파일할 때 막아두면 계산도 안전함)
+    int expression_depth;
+    internal const int MaxExpressionDepth = 600;
+    bool enter_expression()
+    {
+        if (expression_depth >= MaxExpressionDepth || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return false;
+        expression_depth++;
+        return true;
+    }
+    static Expr too_deep(Token[] tokens , out int end)
+    {
+        end = tokens.Length;
+        return syntax_error("식이 너무 깊게 중첩되어 있습니다. (괄호, 연산자, 함수 호출을 여러 줄로 나눠주세요)");
+    }
+
+    Expr compile_operators_core(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
         Expr condition = compile_binary(tokens , start , closed , argument , 2 , out end);
         if (condition.SyntaxError is not null || !is_operator(tokens , end , "?"))
             return condition;
@@ -79,6 +110,19 @@ public partial class Interpreter
     //우선순위가 min 이상인 이항 연산자로 이어진 식
     Expr compile_binary(Token[] tokens , int start , bool closed , bool argument , int min , out int end)
     {
+        if (!enter_expression())
+            return too_deep(tokens , out end);
+        try
+        {
+            return compile_binary_core(tokens , start , closed , argument , min , out end);
+        }
+        finally
+        {
+            expression_depth--;
+        }
+    }
+    Expr compile_binary_core(Token[] tokens , int start , bool closed , bool argument , int min , out int end)
+    {
         Expr left = compile_unary(tokens , start , closed , argument , out end);
         while (left.SyntaxError is null && end < tokens.Length && tokens[end].type is TokenType.Operator)
         {
@@ -104,6 +148,19 @@ public partial class Interpreter
     }
 
     Expr compile_unary(Token[] tokens , int start , bool closed , bool argument , out int end)
+    {
+        if (!enter_expression())
+            return too_deep(tokens , out end);
+        try
+        {
+            return compile_unary_core(tokens , start , closed , argument , out end);
+        }
+        finally
+        {
+            expression_depth--;
+        }
+    }
+    Expr compile_unary_core(Token[] tokens , int start , bool closed , bool argument , out int end)
     {
         if (start < tokens.Length && tokens[start].type is TokenType.Operator)
         {
