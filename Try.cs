@@ -11,8 +11,10 @@ namespace Jyuno;
 //ttl의 제한 시간, 프로그램이 추가한 함수가 던진 JyunoException이 아닌 예외
 public partial class Interpreter
 {
-    //catch 본문에서 처리중인 오류 (값 없는 throw가 그대로 다시 던짐)
-    Exception? handling;
+    //catch 본문에서 처리중인 오류 (가장 안쪽이 마지막, 값 없는 throw가 마지막 것을 그대로 다시 던짐)
+    //catch 본문이 실행되는 동안 던진 값은 이 목록에서만 붙잡고 있을수 있으므로, 메모리 한도를 잴 때 포함함 (Memory.cs)
+    //(재귀 호출마다 catch 본문에서 큰 값을 붙잡으면 한도를 몇 배로 넘을수 있었음)
+    readonly List<JyunoException> handling = new();
 
     //try 줄: try 본문을 실행하고, 오류가 나면 catch 본문을 실행 (tried 다음 줄로 이어서 실행하도록 CurrentExecuteLine은 tried 줄)
     object? run_try(int line , BlockMap map)
@@ -29,7 +31,7 @@ public partial class Interpreter
         //지금 실행하는 본문: try 본문(try 줄 다음 ~ catch 줄 전), 오류가 났다면 catch 본문(catch 줄 다음 ~ tried 줄 전)
         int start = line + 1, stop = catch_line;
         bool caught = false;
-        Exception? outer = handling;
+        int outer = handling.Count;
         try
         {
             for (CurrentExecuteLine = start ; ; CurrentExecuteLine++)
@@ -61,7 +63,7 @@ public partial class Interpreter
                     caught = true;
                     //try 본문에서 진행중이던 for/repeat를 정리하고 try 줄의 영역으로 되돌림 (호출한 함수의 상태는 이미 정리됨)
                     leave_block(line , catch_line , scope);
-                    handling = e;
+                    handling.Add(e);
                     start = catch_line + 1;
                     stop = end;
                     CurrentExecuteLine = catch_line;
@@ -74,7 +76,8 @@ public partial class Interpreter
         }
         finally
         {
-            handling = outer;
+            if (handling.Count > outer)
+                handling.RemoveRange(outer , handling.Count - outer);
         }
     }
 
@@ -131,9 +134,9 @@ public partial class Interpreter
             return new GrammarError(line , error);
         if (compiled.Tokens.Length is 1)
         {
-            if (handling is null)
+            if (handling.Count is 0)
                 throw new JyunoException("다시 던질 오류가 없습니다.");
-            ExceptionDispatchInfo.Throw(handling);
+            ExceptionDispatchInfo.Throw(handling[^1]);
         }
         object?[] values = compiled.Arguments();
         if (values.Length is not 1)

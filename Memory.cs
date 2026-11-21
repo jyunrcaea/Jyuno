@@ -287,6 +287,12 @@ public partial class Interpreter
                     visit_for(state);
             }
             visit_values(it.inline_args);
+            //catch 본문에서 처리중인 던진 값 (Try.cs, catch 변수에 넣었다면 같은 값이므로 한번만 셈)
+            foreach (JyunoException handled in it.handling)
+            {
+                if (handled is JyunoThrownException thrown)
+                    visit(thrown.Value);
+            }
             foreach (object? root in it.roots)
             {
                 if (root is object?[] args)

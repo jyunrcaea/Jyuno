@@ -90,7 +90,7 @@ try
 catch (JyunoException e) { /* memory limit exceeded */ }
 Console.WriteLine(interpreter.MemoryUsage);   //size measured last time (bytes)
 ```
-- Compares the approximate size of the values a script holds (variables, struct values, arrays/lists, loop states, call arguments, large values of the line being computed) against the limit. Discarded values (garbage) are not counted.
+- Compares the approximate size of the values a script holds (variables, struct values, arrays/lists, loop states, call arguments, large values of the line being computed, thrown values being handled in a ``catch``) against the limit. Discarded values (garbage) are not counted.
 - **When it measures**: at the next iteration of a loop (``end``), ``goto``, function calls and inside long-running built-in loops, it only reads the per-thread allocation counter (``GC.GetAllocatedBytesForCurrentThread``, about 1.5ns), and walks the held values only after enough has been allocated since the last measurement. It does not check on every line.
 - **May exceed slightly**: allocations smaller than 1MB run first and are caught at the next measurement. Measurements get more frequent near the limit, so held values **may exceed the limit by about 1MB**. (Sizes are estimates for 64-bit .NET.)
 - **Rejected up front**: built-in functions that create values larger than 1MB (``array.new``/``range``, ``add``/``sub``/``copy``/``slice``/``distinct`` of arrays/lists, ``push`` growing a list, string repetition (``mul``) and concatenation, ``string.format``/``join``/``pad*``/``split``, the items of ``for``, etc.) compute the size first and throw instead of allocating when it would exceed the remaining limit. Strings longer than about 500K characters fall in this category.
