@@ -808,7 +808,7 @@ public partial class Interpreter : IDisposable
         {
             //ttl 안에서 호출한 함수라면 줄마다 시간 제한을 확인하는 반복문으로 실행 (Ttl.cs)
             if (ttl is not null)
-                return call_watched(line , end);
+                return frame.Result = call_watched(line , end);
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
                 next_statement();

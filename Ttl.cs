@@ -109,6 +109,8 @@ public partial class Interpreter
                     leave_ttl(state);
                     return null;
                 }
+                //이전 줄을 계산하는 도중에 붙잡은 값을 놓음 (메모리 한도, Memory.cs: ttl 안의 반복문에서 줄마다 만든 큰 값이 블록이 끝날 때까지 쌓이지 않도록)
+                next_statement();
                 object? ret = execute_line(next , true);
                 if (ret is ReturnInfo or GrammarError)
                     return ret;
@@ -166,11 +168,13 @@ public partial class Interpreter
     }
 
     //ttl 안에서 호출한 함수의 본문: call_function의 반복문과 같지만 줄을 실행하기 전마다 시간 제한을 확인 (ttl 밖에서는 이 반복문을 쓰지 않음)
+    //돌려준 값은 call_function이 호출 정보(CallFrame.Result)에 넣어서, 호출한 줄이 끝날 때까지 메모리 한도의 측정에 포함함
     object? call_watched(int line , int end)
     {
         for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
         {
             check_ttl();
+            next_statement();
             var ret = execute_line(CurrentExecuteLine , true);
             if (ret is ReturnInfo ri)
                 return ri.value;
@@ -186,6 +190,7 @@ public partial class Interpreter
         for (CurrentExecuteLine = start ; CurrentExecuteLine < end ; CurrentExecuteLine++)
         {
             check_ttl();
+            next_statement();
             var ret = execute_line(CurrentExecuteLine , true);
             if (ret is ReturnInfo ri)
             {
