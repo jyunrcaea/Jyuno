@@ -73,6 +73,7 @@ catch (JyunoException e)
 - ``JyunoException.Line``: the line (0-based) where the error happened. For other exceptions thrown by functions the program added, use ``interpreter.LastErrorLine``.
 - If an expression on one line is nested too deeply (hundreds of parentheses or operators), or a value to compare/copy/convert to a string is nested too deeply, a ``JyunoException`` is thrown instead of ending the process with a stack overflow.
 - Passing a wrong kind of value to a built-in function throws ``JyunoException`` instead of a C# exception (``InvalidCastException`` etc.). I/O errors of the file commands are also rethrown as ``JyunoException`` (the original exception is the ``InnerException``).
+- To time-limit only part of a script, the script can use a ``ttl (seconds)`` ~ ``endttl`` block. (Since 1.7.0, see [Jyuno Language](https://github.com/jyunrcaea/Jyuno/blob/master/Language/README.md) (in Korean)) When the time is up, execution leaves the block without an error and continues after ``endttl``. Code outside a ttl block does not check the time at all. To limit the whole script from the program, use ``CancellationToken``.
 - If a function added by the program calls ``Run()`` again during execution, execution returns to the calling line and scope afterwards (previously it continued from line 0 in the top-level scope). A line added with ``ExecuteLine(string)`` during execution is not run again by the outer ``Run()``.
 
 ### Memory limit (since 1.7.0)
@@ -146,7 +147,7 @@ foreach (Statement statement in analysis.Root!.Statements)  // syntax tree
 | API | Description |
 |---|---|
 | ``ScriptAnalysis.Analyze(lines)`` | Tokens, block structure, syntax tree (``Root``), variable scopes (``TopScope``, ``Scopes``), function list, goto targets |
-| ``Statement`` / ``Expression`` | Statements (``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement``, etc.) and expressions (``CallExpression``, ``AssignExpression``, ``RemoveExpression``, etc.), split by the same rules used to compile lines. Since 1.6.0, operators are ``BinaryExpression``, ``UnaryExpression``, ``ConditionalExpression`` and ``CompoundAssignExpression``, and a struct's operator function has its symbol in ``FunctionStatement.Operator``. Since 1.6.1, ``CallExpression.IsKeywordArgument`` tells whether a name was written without parentheses in the operator expression of a keyword argument (``if``, ``return``, etc.), where a missing name gets a different error message. |
+| ``Statement`` / ``Expression`` | Statements (``IfStatement``, ``LoopStatement``, ``ForStatement``, ``FunctionStatement``, ``GotoStatement``, etc.) and expressions (``CallExpression``, ``AssignExpression``, ``RemoveExpression``, etc.), split by the same rules used to compile lines. Since 1.6.0, operators are ``BinaryExpression``, ``UnaryExpression``, ``ConditionalExpression`` and ``CompoundAssignExpression``, and a struct's operator function has its symbol in ``FunctionStatement.Operator``. Since 1.7.0, ``ttl`` ~ ``endttl`` is a ``TtlStatement`` (``Body``, with the time limit in ``Arguments[0]``). Since 1.6.1, ``CallExpression.IsKeywordArgument`` tells whether a name was written without parentheses in the operator expression of a keyword argument (``if``, ``return``, etc.), where a missing name gets a different error message. |
 | ``Scope`` | For each scope (top level, one function call, one for iteration, one struct value), the names that can be created there and their kinds (variable/function/constant/struct) |
 | ``GotoStatement.Targets`` | Execution positions when a goto jumps within the same block or to an outer block |
 | ``ScriptAnalysis.CheckNativeJs(globals)`` | Checks the restrictions required for translating to JavaScript (Native JS) |
@@ -159,6 +160,7 @@ Native JS (translating Jyuno code to JavaScript and running it) requires the fol
 3. ``goto`` cannot jump into a block (``if``, ``while``, ``repeat``, ``for``). (It can jump to lines in the same block or an outer block; computed targets are checked at run time.)
 4. Block structure errors (a missing ``end``, etc.) are reported before running, before that line is reached.
 5. Structs (``struct``, supported by Native JS since 1.5.1) can't be defined inside another struct.
+6. Time-limit blocks (``ttl``, since 1.7.0) are not supported yet.
 
 The operators added in 1.6.0 (``+``, ``==``, ``&&``, etc.) and struct operator functions (``func +``) are supported by Native JS since JyunoSdk 0.5.0 (requires Jyuno 1.6.1).
 

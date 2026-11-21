@@ -314,7 +314,8 @@ public partial class Interpreter : IDisposable
     //예외가 Run()/ExecuteLine() 밖으로 나가기 전에 오류가 난 줄을 기록함 (예외 필터는 finally보다 먼저 실행되므로 가장 안쪽의 줄을 알수 있음, 예외를 잡지는 않음)
     bool mark_error(Exception e)
     {
-        if (e is GrammarErrorException)
+        //ttl의 제한 시간이 지난 것은 오류가 아님 (C# 함수가 ttl 안에서 Run()을 다시 호출했다면 그 밖으로 지나갈수 있음)
+        if (e is GrammarErrorException or TtlExpiredException)
             return false;
         int line = CurrentExecuteLine;
         if (e is JyunoException jyuno && jyuno.Line < 0)
@@ -355,6 +356,9 @@ public partial class Interpreter : IDisposable
         statement_floor = roots.Count;
         try
         {
+            //ttl 안에서 C# 함수가 Run()을 다시 호출했다면 그 실행도 시간 제한을 받음 (Ttl.cs)
+            if (ttl is not null)
+                return run_top_watched(start , end);
             for (CurrentExecuteLine = start ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
                 next_statement();
@@ -649,6 +653,12 @@ public partial class Interpreter : IDisposable
             case KeywordType.EndFunc:
             case KeywordType.EndStruct:
                 break;
+            //시간 제한 블록: 블록이 끝날 때까지 이 줄에서 실행함 (Ttl.cs)
+            case KeywordType.Ttl:
+                return run_ttl(compiled , line , map);
+            //ttl을 거치지 않고 들어온 블록(goto 등)의 끝은 아무것도 하지 않음 (ttl을 거쳤다면 run_ttl이 이 줄을 건너뜀)
+            case KeywordType.EndTtl:
+                break;
         }
         return null;
     }
@@ -796,6 +806,9 @@ public partial class Interpreter : IDisposable
         CallFrame frame = begin_call(body , args);
         try
         {
+            //ttl 안에서 호출한 함수라면 줄마다 시간 제한을 확인하는 반복문으로 실행 (Ttl.cs)
+            if (ttl is not null)
+                return call_watched(line , end);
             for (CurrentExecuteLine = line + 1 ; CurrentExecuteLine < end ; CurrentExecuteLine++)
             {
                 next_statement();
@@ -1030,6 +1043,9 @@ public partial class Interpreter : IDisposable
     object? call_inline(JyunoFunction function , InlineShape shape , object?[] args)
     {
         check_call_depth();
+        //ttl 안에서의 호출은 줄을 실행하지 않으므로 호출마다 시간 제한을 확인
+        if (ttl is not null)
+            check_ttl();
         int current_line = CurrentExecuteLine;
         Scope caller = current;
         if (!shape.DirectCompiled)
@@ -1131,7 +1147,7 @@ public partial class Interpreter : IDisposable
     //스크립트를 한번 훑어서 if/while/repeat/for/func 블록의 짝을 미리 계산 (중첩된 블록과 break를 정확히 처리하기 위함)
     internal sealed class BlockMap
     {
-        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc, struct ↔ endstruct
+        //if → else(없다면 end), else → end, while/repeat/for → end, end → 여는 키워드, break → 반복문의 end, func ↔ endfunc, struct ↔ endstruct, ttl ↔ endttl
         public readonly int[] Pair;
         //블록 구조가 잘못된 줄의 오류 메시지
         public readonly string?[] Errors;
@@ -1180,6 +1196,11 @@ public partial class Interpreter : IDisposable
                     Errors[line] = "struct 키워드는 endstruct 키워드로 종료 표시가 있어야 합니다.";
                     return;
                 }
+                if (keyword_at(line) is KeywordType.Ttl)
+                {
+                    Errors[line] = "ttl 키워드는 endttl 키워드로 종료 표시가 있어야 합니다.";
+                    return;
+                }
                 Errors[line] = "모든 조건문(if, while 등) 키워드는 end 키워드로 종료 표시가 있어야 합니다.";
                 //else가 있는 if라면 else도 오류
                 if (Pair[line] >= 0)
@@ -1192,7 +1213,7 @@ public partial class Interpreter : IDisposable
                 KeywordType? keyword = keyword_at(line);
                 if (keyword is null)
                     continue;
-                if (keyword is KeywordType.Func or KeywordType.Struct || Grammar.Conditionals.Contains(keyword.Value))
+                if (keyword is KeywordType.Func or KeywordType.Struct or KeywordType.Ttl || Grammar.Conditionals.Contains(keyword.Value))
                 {
                     if (keyword is KeywordType.Struct)
                     {
@@ -1221,6 +1242,12 @@ public partial class Interpreter : IDisposable
                             Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다.";
                             break;
                         }
+                        //ttl은 endttl로 닫아야 함
+                        if (keyword_at(opener) is KeywordType.Ttl)
+                        {
+                            Errors[line] = "end와 짝이 되는 if, while, repeat, for 키워드가 없습니다. (ttl은 endttl로 닫아야 합니다)";
+                            break;
+                        }
                         opened.Pop();
                         //else가 있는 if라면 else가 end를 가리킴
                         if (Pair[opener] >= 0)
@@ -1245,6 +1272,31 @@ public partial class Interpreter : IDisposable
                         Pair[func] = line;
                         Pair[line] = func;
                         break;
+                    case KeywordType.EndTtl:
+                        //가장 안쪽의 ttl (함수 밖의 ttl은 제외)
+                        int ttl_line = -1;
+                        foreach (int o in opened)
+                        {
+                            if (is_body(o))
+                                break;
+                            if (keyword_at(o) is KeywordType.Ttl)
+                            {
+                                ttl_line = o;
+                                break;
+                            }
+                        }
+                        if (ttl_line < 0)
+                        {
+                            Errors[line] = "endttl과 짝이 되는 ttl 키워드가 없습니다.";
+                            break;
+                        }
+                        //ttl 안에서 닫히지 않은 블록
+                        while (opened.Peek() != ttl_line)
+                            unclosed(opened.Pop());
+                        opened.Pop();
+                        Pair[ttl_line] = line;
+                        Pair[line] = ttl_line;
+                        break;
                     case KeywordType.Break:
                         //가장 안쪽 반복문 (함수 밖의 반복문은 제외, 반복문의 end는 아직 모르므로 나중에 연결)
                         int loop = -1;
@@ -1253,7 +1305,8 @@ public partial class Interpreter : IDisposable
                             KeywordType? kind = keyword_at(o);
                             if (kind is KeywordType.Func or KeywordType.Struct)
                                 break;
-                            if (kind is not KeywordType.If)
+                            //if와 ttl은 반복문이 아니므로 건너뜀 (break로 ttl을 빠져나갈수 있음)
+                            if (kind is not (KeywordType.If or KeywordType.Ttl))
                             {
                                 loop = o;
                                 break;
@@ -1280,7 +1333,8 @@ public partial class Interpreter : IDisposable
                             KeywordType? kind = keyword_at(o);
                             if (kind is KeywordType.Func or KeywordType.Struct)
                                 break;
-                            if (kind is not KeywordType.If)
+                            //ttl은 다시 실행하지 않으므로 if와 같음
+                            if (kind is not (KeywordType.If or KeywordType.Ttl))
                                 ParamOnce[line] = false;
                         }
                         break;

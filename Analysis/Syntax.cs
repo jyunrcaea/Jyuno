@@ -168,7 +168,9 @@ public enum StatementKind
     Param,
     Local,
     /// <summary>struct ~ endstruct (FunctionStatement, 1.5.0부터)</summary>
-    Struct
+    Struct,
+    /// <summary>ttl ~ endttl: 시간 제한 블록 (TtlStatement, 1.7.0부터)</summary>
+    Ttl
 }
 
 /// <summary>문장 (줄 하나, 또는 블록 하나)</summary>
@@ -192,7 +194,7 @@ public class Statement
     public Scope Scope { get; internal set; } = null!;
     /// <summary>이 문장이 들어있는 함수 (최상위라면 null)</summary>
     public FunctionStatement? Function => Parent.Function;
-    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat는 키워드 다음부터, for는 이름 다음부터, 1.6.0부터 인자 하나하나가 식이며 이름 다음에 값이 있다면 함수 호출)</summary>
+    /// <summary>키워드 다음의 인자 (return/goto/if/while/repeat/ttl은 키워드 다음부터, for는 이름 다음부터, 1.6.0부터 인자 하나하나가 식이며 이름 다음에 값이 있다면 함수 호출)</summary>
     public IReadOnlyList<Expression> Arguments { get; internal set; } = Array.Empty<Expression>();
 }
 
@@ -214,7 +216,7 @@ public sealed class TokenErrorStatement : Statement
 public abstract class BlockStatement : Statement
 {
     internal BlockStatement(StatementKind kind , int line) : base(kind , line) { }
-    /// <summary>블록을 닫는 줄 (end 또는 endfunc)</summary>
+    /// <summary>블록을 닫는 줄 (end, endfunc, endstruct 또는 endttl)</summary>
     public int EndLine { get; internal set; }
     /// <summary>end 줄의 토큰화 오류</summary>
     public string? EndTokenError { get; internal set; }
@@ -245,6 +247,16 @@ public sealed class ForStatement : BlockStatement
     public Block Body { get; internal set; } = null!;
     /// <summary>반복 한번마다 새로 만들어지는 영역</summary>
     public Scope InnerScope { get; internal set; } = null!;
+}
+
+/// <summary>
+/// ttl (초) ~ endttl: 블록을 실행한 시간이 제한(Arguments[0], 초)을 넘으면 실행중이던 줄이 끝난 뒤 endttl 다음 줄로 빠져나감 (1.7.0부터).
+/// 본문은 ttl과 같은 영역에서 실행하며(새 영역을 만들지 않음), 본문에서 호출한 함수도 시간 제한을 받음
+/// </summary>
+public sealed class TtlStatement : BlockStatement
+{
+    internal TtlStatement(int line) : base(StatementKind.Ttl , line) { }
+    public Block Body { get; internal set; } = null!;
 }
 
 /// <summary>func ~ endfunc, 또는 struct ~ endstruct (Kind가 StatementKind.Struct, 본문은 생성자)</summary>
@@ -324,7 +336,7 @@ public enum GotoTargetKind
 {
     /// <summary>Statement 앞으로 이동</summary>
     Before,
-    /// <summary>Statement 다음으로 이동 (if의 else/end 줄)</summary>
+    /// <summary>Statement 다음으로 이동 (if의 else/end 줄, ttl의 endttl 줄)</summary>
     After,
     /// <summary>goto를 감싸는 반복문(Statement)의 다음 반복 (repeat/for의 end 줄)</summary>
     Continue,

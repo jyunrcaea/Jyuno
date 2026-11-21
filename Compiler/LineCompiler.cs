@@ -62,7 +62,7 @@ public partial class Interpreter
         public KeywordType? Keyword;
         //키워드가 없는 줄
         public Func<object?> Expression = () => null;
-        //키워드 다음의 인자들 (return/goto/if/while/repeat는 1번째 토큰부터, for는 2번째 토큰부터)
+        //키워드 다음의 인자들 (return/goto/if/while/repeat/ttl는 1번째 토큰부터, for는 2번째 토큰부터)
         public Func<object?[]> Arguments = () => Array.Empty<object?>();
         //local (이름) = (값) 의 값
         public Func<object?>? LocalValue;
@@ -116,6 +116,7 @@ public partial class Interpreter
                 case KeywordType.Return:
                 case KeywordType.Goto:
                 case KeywordType.Repeat:
+                case KeywordType.Ttl:
                     line.Arguments = make_arguments(compile_keyword_arguments(tokens , 1));
                     break;
                 case KeywordType.For:

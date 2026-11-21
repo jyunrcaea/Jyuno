@@ -17,7 +17,9 @@ public class Grammar
         {"local", KeywordType.Local },
         {"for", KeywordType.For },
         {"struct", KeywordType.Struct },
-        {"endstruct", KeywordType.EndStruct }
+        {"endstruct", KeywordType.EndStruct },
+        {"ttl", KeywordType.Ttl },
+        {"endttl", KeywordType.EndTtl }
     };
 
     //기호: 이름을 끊는 글자 중 연산자가 아닌 것 ('='은 '=='처럼 연산자의 일부가 아니라면 대입/삭제)
@@ -106,5 +108,8 @@ public enum KeywordType
     Local,
     For,
     Struct,
-    EndStruct
+    EndStruct,
+    /// <summary>ttl (초): endttl까지의 블록을 실행한 시간이 제한을 넘으면 endttl 다음 줄로 빠져나감 (1.7.0부터)</summary>
+    Ttl,
+    EndTtl
 }
