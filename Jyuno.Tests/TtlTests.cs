@@ -498,11 +498,9 @@ public class TtlTests
     }
 
     [Fact]
-    public void Analysis_NativeJsRejectsTtl()
+    public void Analysis_NativeJsAllowsTtl()
     {
-        var errors = ScriptAnalysis.Analyze(new[] { "ttl 1" , "  x = 1" , "endttl" }).CheckNativeJs(new Runtime().GetGlobals());
-        var error = Assert.Single(errors);
-        Assert.Equal(0 , error.Line);
-        Assert.Contains("ttl" , error.Message);
+        //Native JS도 ttl을 변환할수 있음 (1.7.1부터)
+        Assert.Empty(ScriptAnalysis.Analyze(new[] { "ttl 1" , "  x = 1" , "endttl" }).CheckNativeJs(new Runtime().GetGlobals()));
     }
 }

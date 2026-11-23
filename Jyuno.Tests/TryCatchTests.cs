@@ -364,9 +364,25 @@ public class TryCatchTests
         //catch의 이름은 지금 영역에 만들어짐
         Assert.True(analysis.TopScope.Names.ContainsKey("err"));
         Assert.True(analysis.TopScope.Names.ContainsKey("x"));
-        var errors = analysis.CheckNativeJs(new Runtime().GetGlobals());
-        Assert.Contains(errors , o => o.Line == 0 && o.Message.Contains("try/catch"));
-        Assert.Contains(errors , o => o.Line == 6 && o.Message.Contains("throw"));
+        //Native JS도 try/catch와 throw를 변환할수 있음 (1.7.1부터)
+        Assert.Empty(analysis.CheckNativeJs(new Runtime().GetGlobals()));
+    }
+
+    [Fact]
+    public void Analysis_GotoIntoTry_IsNotATarget()
+    {
+        //try/catch 본문 안쪽으로 들어가는 goto는 실행할때 오류이므로 이동 대상에서 빠지고, Native JS 제약(블록 안쪽으로 goto)으로도 세지 않음
+        string[] lines = { "goto 2" , "try" , "  x = 1" , "  goto 2" , "catch e" , "  goto 6" , "  y = 2" , "tried" , "goto 6" , "goto 7" };
+        ScriptAnalysis analysis = ScriptAnalysis.Analyze(lines);
+        Assert.Empty(analysis.StructureErrors);
+        var gotos = analysis.Root!.Statements.OfType<GotoStatement>().ToList();
+        var attempt = Assert.IsType<TryStatement>(analysis.Root.Statements[1]);
+        Assert.Empty(gotos[0].Targets);   //바깥에서 try 본문으로
+        Assert.Empty(gotos[1].Targets);   //바깥에서 catch 본문으로
+        Assert.Single(gotos[2].Targets);  //tried 줄은 바깥 블록에 속함
+        Assert.Single(attempt.Body.Statements.OfType<GotoStatement>().Single().Targets);       //같은 try 본문 안
+        Assert.Single(attempt.CatchBody.Statements.OfType<GotoStatement>().Single().Targets);  //같은 catch 본문 안
+        Assert.Empty(analysis.CheckNativeJs(new Runtime().GetGlobals()));
     }
 
     [Fact]
