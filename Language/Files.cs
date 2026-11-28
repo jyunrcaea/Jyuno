@@ -504,8 +504,10 @@ internal static class Files
         string full_source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
         string full_target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target));
         StringComparison comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        //루트('/', 'C:\')는 끝의 구분자가 남아 있으므로 구분자를 더 붙이지 않음
+        string source_prefix = Path.EndsInDirectorySeparator(full_source) ? full_source : full_source + Path.DirectorySeparatorChar;
         if (string.Equals(full_source , full_target , comparison) ||
-            full_target.StartsWith(full_source + Path.DirectorySeparatorChar , comparison))
+            full_target.StartsWith(source_prefix , comparison))
             throw new JyunoException($"{name}: 대상 디렉토리가 원본 디렉토리 안에 있습니다.");
 
         Stack<(string Source, string Target)> pending = new();
@@ -525,6 +527,13 @@ internal static class Files
             {
                 Interpreter.Tick();
                 string dest_sub = Path.Combine(current_target , Path.GetFileName(sub));
+                //디렉토리를 가리키는 심볼릭 링크(정션 포함)는 따라가지 않고 같은 링크를 만듦 (cp -R과 같음)
+                //따라가면 상위 디렉토리를 가리키는 링크에서 같은 내용을 OS의 한도(약 40단계)까지 복사하다가 오류가 남
+                if (new DirectoryInfo(sub).LinkTarget is string link)
+                {
+                    Directory.CreateSymbolicLink(dest_sub , link);
+                    continue;
+                }
                 pending.Push((sub, dest_sub));
             }
         }

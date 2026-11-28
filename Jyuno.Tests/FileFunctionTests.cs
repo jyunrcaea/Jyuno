@@ -209,6 +209,28 @@ public sealed class FileFunctionTests : IDisposable
     }
 
     [Fact]
+    public void Directory_Copy_KeepsDirectoryLinks()
+    {
+        //상위 디렉토리를 가리키는 링크를 따라가지 않고 링크로 복사 (따라가면 OS의 한도까지 같은 내용을 복사하다가 오류)
+        string source = Path.Combine(root , "linked");
+        Directory.CreateDirectory(Path.Combine(source , "inner"));
+        File.WriteAllText(Path.Combine(source , "f.txt") , "f");
+        try
+        {
+            Directory.CreateSymbolicLink(Path.Combine(source , "inner" , "up") , "..");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return; //Windows에서 심볼릭 링크를 만들 권한이 없음
+        }
+        string target = Path.Combine(root , "linked-copy");
+        Assert.Equal(true , Eval($"directory.copy {Lit(source)} {Lit(target)}"));
+        Assert.Equal("f" , File.ReadAllText(Path.Combine(target , "f.txt")));
+        Assert.Equal(".." , new DirectoryInfo(Path.Combine(target , "inner" , "up")).LinkTarget);
+        Assert.Single(Directory.GetFileSystemEntries(Path.Combine(target , "inner")));
+    }
+
+    [Fact]
     public void Directory_CdAndNow_RoundTrip()
     {
         string original = Directory.GetCurrentDirectory();
