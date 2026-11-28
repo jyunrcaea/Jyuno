@@ -947,7 +947,7 @@ public sealed class ScriptAnalysis
         }
         block(Root);
         foreach (GotoStatement statement in into_block_gotos)
-            errors.Add(new GrammarError(statement.Line , "Native JS 제약: goto로 블록(if, while, repeat, for) 안쪽으로 들어갈수 없습니다."));
+            errors.Add(new GrammarError(statement.Line , "Native JS 제약: goto로 블록(if, while, repeat, for, ttl) 안쪽으로 들어갈수 없습니다."));
         errors.Sort((a , b) => a.Line.CompareTo(b.Line));
         return errors;
     }
