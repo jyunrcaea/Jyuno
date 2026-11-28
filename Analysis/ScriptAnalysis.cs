@@ -778,12 +778,42 @@ public sealed class ScriptAnalysis
             else
                 result = enclosing.Contains(opener) ? new GotoTarget(target , GotoTargetKind.Continue , opener) : new GotoTarget(target , GotoTargetKind.After , opener);
         }
+        //try/catch 본문 안쪽으로 들어가는 goto는 인터프리터에서도 실행할때 오류 ('goto로 try/catch 블록 안쪽으로 들어갈수 없습니다.', 1.7.0부터)
+        //대상에서 빼기만 하고 블록 안쪽으로 들어가는 goto(Native JS 제약)로 세지 않음: Native JS는 실행할때 인터프리터와 같은 오류를 냄
+        if (!can_enter_try(statement , result))
+            return null;
         if (result.Kind is GotoTargetKind.Before or GotoTargetKind.After && !enclosing_blocks.Contains(result.Statement!.Parent))
         {
             into_block = true;
             return null;
         }
         return result;
+    }
+
+    //goto가 대상 줄로 이동할 때 try/catch 본문 안쪽으로 들어가지 않는지 (Interpreter.BlockMap.CanEnter와 같음: 대상의 가장 안쪽 try 본문/catch 본문이 goto를 감싸야 함)
+    //catch/tried 줄은 try 줄처럼 바깥 블록에 속함 (그 줄로 가면 try 블록이 끝남)
+    static bool can_enter_try(GotoStatement statement , GotoTarget target)
+    {
+        if (target.Statement is null)
+            return true;
+        //대상 문장(else/end 줄이라면 그 블록을 여는 문장)이 있는 블록에서 바깥으로: else/end 줄은 여는 문장과 같은 try 본문에 있음
+        (TryStatement Try, bool Catch)? innermost = null;
+        for (Block? b = target.Statement.Parent ; b?.Owner is BlockStatement owner and not FunctionStatement ; b = owner.Parent)
+        {
+            if (owner is TryStatement t)
+            {
+                innermost = (t, b == t.CatchBody);
+                break;
+            }
+        }
+        if (innermost is null)
+            return true;
+        for (Block? b = statement.Parent ; b?.Owner is BlockStatement owner and not FunctionStatement ; b = owner.Parent)
+        {
+            if (owner is TryStatement t && t == innermost.Value.Try && (b == t.CatchBody) == innermost.Value.Catch)
+                return true;
+        }
+        return false;
     }
 
     void resolve_gotos(Block body , FunctionStatement? function , List<GotoStatement> gotos)
@@ -832,10 +862,9 @@ public sealed class ScriptAnalysis
     /// 스크립트를 JavaScript로 변환할때(Native JS) 지켜야 하는 제약을 검사합니다.
     /// 1. 변수/함수 삭제(이름 =)를 쓸수 없음
     /// 2. 내장 함수와 전역 함수/상수(add, mul, console.writeline, null 등)를 다시 정의하거나 대입할수 없음
-    /// 3. goto로 블록(if/while/repeat/for) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
+    /// 3. goto로 블록(if/while/repeat/for/ttl) 안쪽으로 들어갈수 없음 (계산한 대상은 실행할때 검사)
     /// 4. 구조체(struct) 생성자 안에서 구조체를 정의할수 없음
-    /// 5. 시간 제한 블록(ttl)을 쓸수 없음 (1.7.0부터, Native JS는 아직 지원하지 않음)
-    /// 6. try/catch와 throw를 쓸수 없음 (1.7.0부터, Native JS는 아직 지원하지 않음)
+    /// (1.7.1부터 시간 제한 블록 ttl과 try/catch, throw도 변환할수 있음. goto로 try/catch 본문 안쪽에 들어가는 것은 인터프리터처럼 실행할때 오류)
     /// </summary>
     /// <param name="globals">전역 이름 (Runtime.GetGlobals())</param>
     public IReadOnlyList<GrammarError> CheckNativeJs(IReadOnlyDictionary<string , GlobalName> globals)
@@ -889,18 +918,11 @@ public sealed class ScriptAnalysis
                             block(branch.Else);
                         break;
                     case LoopStatement loop: block(loop.Body); break;
-                    case TtlStatement limit:
-                        errors.Add(new GrammarError(limit.Line , "Native JS 제약: 시간 제한 블록(ttl)은 아직 쓸수 없습니다."));
-                        block(limit.Body);
-                        break;
+                    case TtlStatement limit: block(limit.Body); break;
                     case TryStatement attempt:
-                        errors.Add(new GrammarError(attempt.Line , "Native JS 제약: try/catch는 아직 쓸수 없습니다."));
                         define(attempt.CatchLine , attempt.CatchName , "catch 변수로 정의");
                         block(attempt.Body);
                         block(attempt.CatchBody);
-                        break;
-                    case ThrowStatement thrown:
-                        errors.Add(new GrammarError(thrown.Line , "Native JS 제약: throw는 아직 쓸수 없습니다."));
                         break;
                     case ForStatement each:
                         define(each.Line , each.VariableName , "for 변수로 정의");
@@ -925,7 +947,7 @@ public sealed class ScriptAnalysis
         }
         block(Root);
         foreach (GotoStatement statement in into_block_gotos)
-            errors.Add(new GrammarError(statement.Line , "Native JS 제약: goto로 블록(if, while, repeat, for) 안쪽으로 들어갈수 없습니다."));
+            errors.Add(new GrammarError(statement.Line , "Native JS 제약: goto로 블록(if, while, repeat, for, ttl) 안쪽으로 들어갈수 없습니다."));
         errors.Sort((a , b) => a.Line.CompareTo(b.Line));
         return errors;
     }
