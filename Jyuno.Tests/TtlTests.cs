@@ -498,11 +498,15 @@ public class TtlTests
     }
 
     [Fact]
-    public void Analysis_NativeJsRejectsTtl()
+    public void Analysis_NativeJsAllowsTtl()
     {
-        var errors = ScriptAnalysis.Analyze(new[] { "ttl 1" , "  x = 1" , "endttl" }).CheckNativeJs(new Runtime().GetGlobals());
-        var error = Assert.Single(errors);
+        //Native JS도 ttl을 변환할수 있음 (1.7.1부터)
+        Assert.Empty(ScriptAnalysis.Analyze(new[] { "ttl 1" , "  x = 1" , "endttl" }).CheckNativeJs(new Runtime().GetGlobals()));
+        //goto로 ttl 본문 안쪽에 들어가는 것은 다른 블록처럼 Native JS 제약 (인터프리터에서는 시간 제한 없이 실행)
+        var error = Assert.Single(ScriptAnalysis.Analyze(new[] { "goto 2" , "ttl 1" , "  x = 1" , "endttl" }).CheckNativeJs(new Runtime().GetGlobals()));
         Assert.Equal(0 , error.Line);
-        Assert.Contains("ttl" , error.Message);
+        Assert.Equal("Native JS 제약: goto로 블록(if, while, repeat, for, ttl) 안쪽으로 들어갈수 없습니다." , error.Message);
+        //endttl 줄과 ttl 본문 안의 goto는 제약이 아님
+        Assert.Empty(ScriptAnalysis.Analyze(new[] { "goto 3" , "ttl 1" , "  goto 1" , "endttl" }).CheckNativeJs(new Runtime().GetGlobals()));
     }
 }

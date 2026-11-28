@@ -364,9 +364,87 @@ public class TryCatchTests
         //catch의 이름은 지금 영역에 만들어짐
         Assert.True(analysis.TopScope.Names.ContainsKey("err"));
         Assert.True(analysis.TopScope.Names.ContainsKey("x"));
-        var errors = analysis.CheckNativeJs(new Runtime().GetGlobals());
-        Assert.Contains(errors , o => o.Line == 0 && o.Message.Contains("try/catch"));
-        Assert.Contains(errors , o => o.Line == 6 && o.Message.Contains("throw"));
+        //Native JS도 try/catch와 throw를 변환할수 있음 (1.7.1부터)
+        Assert.Empty(analysis.CheckNativeJs(new Runtime().GetGlobals()));
+    }
+
+    [Fact]
+    public void Analysis_GotoIntoTry_IsNotATarget()
+    {
+        //try/catch 본문 안쪽으로 들어가는 goto는 실행할때 오류이므로 이동 대상에서 빠지고, Native JS 제약(블록 안쪽으로 goto)으로도 세지 않음
+        string[] lines = { "goto 2" , "try" , "  x = 1" , "  goto 2" , "catch e" , "  goto 6" , "  y = 2" , "tried" , "goto 6" , "goto 7" };
+        ScriptAnalysis analysis = ScriptAnalysis.Analyze(lines);
+        Assert.Empty(analysis.StructureErrors);
+        var gotos = analysis.Root!.Statements.OfType<GotoStatement>().ToList();
+        var attempt = Assert.IsType<TryStatement>(analysis.Root.Statements[1]);
+        Assert.Empty(gotos[0].Targets);   //바깥에서 try 본문으로
+        Assert.Empty(gotos[1].Targets);   //바깥에서 catch 본문으로
+        Assert.Single(gotos[2].Targets);  //tried 줄은 바깥 블록에 속함
+        Assert.Single(attempt.Body.Statements.OfType<GotoStatement>().Single().Targets);       //같은 try 본문 안
+        Assert.Single(attempt.CatchBody.Statements.OfType<GotoStatement>().Single().Targets);  //같은 catch 본문 안
+        Assert.Empty(analysis.CheckNativeJs(new Runtime().GetGlobals()));
+    }
+
+    [Fact]
+    public void Analysis_GotoIntoTry_MatchesInterpreter()
+    {
+        //중첩된 try/catch, if, while, ttl, 함수 안의 try에서 모든 (goto 위치, 대상 줄) 쌍을 확인:
+        //인터프리터가 'goto로 try/catch 블록 안쪽으로...' 오류를 내는 경우와 분석기가 대상에서 빼는 경우가 같아야 함 (1.7.1)
+        string[] template = {
+            "try" , "  @" , "  if true" , "    @" , "  end" , "  try" , "    @" , "  catch a" , "    @" , "  tried" , "  throw 1" ,
+            "catch e" , "  @" , "  while false" , "    @" , "  end" , "  try" , "    @" , "  catch b" , "    @" , "  tried" , "tried" ,
+            "@" , "ttl 10" , "  @" , "endttl" ,
+            "func f" , "  try" , "    @" , "  catch c" , "    @" , "  tried" , "  @" , "endfunc" , "@" };
+        const string into_try = "goto로 try/catch 블록 안쪽으로 들어갈수 없습니다.";
+        int checked_pairs = 0;
+        for (int from = 0 ; from < template.Length ; from++)
+        {
+            if (!template[from].EndsWith('@'))
+                continue;
+            string[] script(string at) => template.Select((o , i) => o.EndsWith('@') ? o[..^1] + (i == from ? at : "n = 0") : o).ToArray();
+            for (int to = 0 ; to <= template.Length ; to++)
+            {
+                //분석기: 상수 대상의 goto
+                ScriptAnalysis analysis = ScriptAnalysis.Analyze(script("goto " + to));
+                Assert.Empty(analysis.StructureErrors);
+                GotoStatement statement = Assert.Single(statements(analysis.Root!).OfType<GotoStatement>());
+                bool analyzed = statement.Targets.Count > 0 || analysis.CheckNativeJs(new Runtime().GetGlobals()).Any(o => o.Line == from);
+                //인터프리터: 그 줄에서 실행을 시작해서 goto를 한번만 실행 (같은 구조, 대상은 C# 함수가 돌려줌)
+                Runtime runtime = new();
+                int calls = 0;
+                runtime.AddFunction("target" , _ => ++calls is 1 ? (long)to : throw new OperationCanceledException());
+                Interpreter interpreter = runtime.Create(script("goto target"));
+                Exception? error = Record.Exception(() => interpreter.Run(from));
+                bool rejected = error is JyunoException { Message: into_try } && interpreter.LastErrorLine == from;
+                if (error is JyunoException { Message: "goto로 함수 안팎을 넘나들수 없습니다." } && calls is 1)
+                {
+                    Assert.Empty(statement.Targets);
+                    continue;
+                }
+                Assert.True(analyzed != rejected , $"goto {to} (줄 {from}): 인터프리터 {(rejected ? "오류" : "이동")}, 분석기 {(analyzed ? "이동" : "대상 없음")}");
+                checked_pairs++;
+            }
+        }
+        Assert.True(checked_pairs > 300);
+
+        static IEnumerable<Statement> statements(Block block)
+        {
+            foreach (Statement statement in block.Statements)
+            {
+                yield return statement;
+                IEnumerable<Block> inner = statement switch {
+                    IfStatement o => o.Else is null ? new[] { o.Then } : new[] { o.Then , o.Else },
+                    LoopStatement o => new[] { o.Body },
+                    TtlStatement o => new[] { o.Body },
+                    TryStatement o => new[] { o.Body , o.CatchBody },
+                    FunctionStatement o => new[] { o.Body },
+                    _ => Array.Empty<Block>()
+                };
+                foreach (Block b in inner)
+                    foreach (Statement s in statements(b))
+                        yield return s;
+            }
+        }
     }
 
     [Fact]

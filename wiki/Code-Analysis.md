@@ -23,10 +23,10 @@ foreach (Statement statement in analysis.Root!.Statements)  // syntax tree
 Native JS (translating Jyuno code to JavaScript and running it) requires the following. ``CheckNativeJs`` reports violations with line numbers before running.
 1. Removing variables/functions (``name =``) is not allowed.
 2. Built-in functions and global functions/constants (``add``, ``mul``, ``console.writeline``, ``math.pi``, ``true``, etc.) cannot be redefined (``func``, ``local``, ``param``, ``for``, labels, constants) or assigned to.
-3. ``goto`` cannot jump into a block (``if``, ``while``, ``repeat``, ``for``). (It can jump to lines in the same block or an outer block; computed targets are checked at run time.)
+3. ``goto`` cannot jump into a block (``if``, ``while``, ``repeat``, ``for``, ``ttl``). (It can jump to lines in the same block or an outer block; computed targets are checked at run time.)
 4. Block structure errors (a missing ``end``, etc.) are reported before running, before that line is reached.
 5. Structs (``struct``, supported by Native JS since 1.5.1) can't be defined inside another struct.
-6. Time-limit blocks (``ttl``, since 1.7.0) are not supported yet.
-7. ``try``/``catch`` and ``throw`` (since 1.7.0) are not supported yet.
 
 The operators added in 1.6.0 (``+``, ``==``, ``&&``, etc.) and struct operator functions (``func +``) are supported by Native JS since JyunoSdk 0.5.0 (requires Jyuno 1.6.1).
+
+The time-limit block (``ttl``), ``try``/``catch`` and ``throw`` added in 1.7.0 are supported by Native JS since JyunoSdk 0.7.0 (requires Jyuno 1.7.1). Jumping with ``goto`` into a ``try`` body or a ``catch`` body is a run-time error, as in the interpreter (it can be caught with ``catch``), so since 1.7.1 the analyzer leaves such lines out of ``GotoStatement.Targets`` and doesn't count them under restriction 3.
