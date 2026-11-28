@@ -181,79 +181,7 @@ public static class JyunoCommands
             return Values.Abs(args[0] ?? throw null_exception);
         });
     }
-    public static void AddFile(VariableDictionary dict)
-    {
-        dict.AddFunction("file.exist" , args => {
-            if (args.Length is 0 || (args[0] ?? throw null_exception) is not string)
-                throw new JyunoException("파일 경로를 입력해주세요.");
-            return File.Exists((string?)(args[0] ?? throw null_exception));
-        });
-        dict.AddFunction("file.read" , args => {
-            if (args.Length is 0 || (args[0] ?? throw null_exception) is not string)
-                throw new JyunoException("파일의 경로를 입력해야 합니다.");
-            string path = (string)args[0]!;
-            return File.Exists(path) ? io(() => File.ReadAllText(path)) : null;
-        });
-        dict.AddFunction("directory.now" , args => {
-            return Directory.GetCurrentDirectory();
-        });
-        dict.AddFunction("directory.exist" , args => {
-            if (args.Length is 0 || (args[0] ?? throw null_exception) is not string)
-                throw new JyunoException("경로를 입력해주세요.");
-            return Directory.Exists((string?)(args[0] ?? throw null_exception));
-        });
-        dict.AddFunction("file.write" , args => {
-            if (args.Length < 2)
-                throw new JyunoException("파일의 경로, 그리고 내용을 입력해야합니다.");
-            if ((args[0] ?? throw null_exception) is not string path)
-                throw new JyunoException("파일의 경로는 문자열이어야 합니다.");
-            string text = Values.Text(args[1] ?? throw null_exception);
-            io(() => File.WriteAllText(path , text));
-            return null;
-        });
-        dict.AddFunction("directory.files" , args => {
-            if (args.Length > 0 && (args[0] ?? throw null_exception) is string path)
-            {
-                if (!Directory.Exists((string?)(args[0] ?? throw null_exception)))
-                    return false;
-            }
-            else
-            {
-                path = Directory.GetCurrentDirectory();
-            }
-            return io(() => Directory.GetFiles(path));
-        });
-        dict.AddFunction("directory.list" , args => {
-            if (args.Length > 0 && (args[0] ?? throw null_exception) is string path)
-            {
-                if (!Directory.Exists(path))
-                    return false;
-            } else
-            {
-                path = Directory.GetCurrentDirectory();
-            }
-            return io(() => Directory.GetDirectories(path));
-        });
-        dict.AddFunction("directory.move" , args => {
-            if (args.Length >= 2 && args[0] is string source && args[1] is string target)
-            {
-                io(() => Directory.Move(source , target));
-                return true;
-            }
-            throw new JyunoException("기존 경로, 그리고 이동할 새 경로를 입력하지 않았습니다.");
-        });
-        dict.AddFunction("file.remove" , args => {
-            if (args.Length is 0)
-            {
-                throw new JyunoException("제거할 파일의 경로를 입력해야 합니다.");
-            }
-            if ((args[0] ?? throw null_exception) is not string path)
-                throw new JyunoException("제거할 파일의 경로는 문자열이어야 합니다.");
-            if (!File.Exists(path)) return false;
-            io(() => File.Delete(path));
-            return true;
-        });
-    }
+    public static void AddFile(VariableDictionary dict) => Files.Add(dict);
 
     //─── 사칙연산/비교/논리 (연산자 +, -, *, /, %, ==, <, >, &, |, ! 와 같은 계산) ───
     //첫 인자가 그 연산자를 다시 정의한 구조체 값이라면 구조체 함수를 호출함 (1.6.0부터)
@@ -485,7 +413,7 @@ public static class JyunoCommands
     }
 
     //파일 작업의 .NET 예외(권한 없음, 잘못된 경로 등)를 Jyuno 오류로 바꿈 (1.6.2부터)
-    static T io<T>(Func<T> action)
+    internal static T io<T>(Func<T> action)
     {
         try
         {
@@ -496,7 +424,7 @@ public static class JyunoCommands
             throw new JyunoException($"파일 작업을 하지 못했습니다: {e.Message}" , e);
         }
     }
-    static void io(Action action) => io<object?>(() => { action(); return null; });
+    internal static void io(Action action) => io<object?>(() => { action(); return null; });
 
     //예외 객체를 공유하면 스택 트레이스가 덮어써지므로 매번 새로 만듦
     public static JyunoException null_exception => new("null을 처리할수 없습니다.");
